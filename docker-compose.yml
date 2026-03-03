@@ -7,9 +7,9 @@ services:
       - "8000:8000"
     environment:
       - AEGIS_ENV=development
-      - VAULT_ADDR=http://vault:8200
-      - TEMPORAL_HOST=temporal:7233
-      - OPA_URL=http://opa:8181
+      - AEGIS_VAULT_ADDR=http://vault:8200
+      - AEGIS_TEMPORAL_HOST=temporal:7233
+      - AEGIS_OPA_URL=http://opa:8181
     depends_on:
       - vault
       - temporal

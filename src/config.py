@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Watchdog settings
     max_agent_steps: int = 10
-    max_token_velocity: int = 10_000  # tokens per minute
+    max_token_velocity: int = 10_000  # tokens per step
     budget_limit_usd: float = 10.0
 
 
