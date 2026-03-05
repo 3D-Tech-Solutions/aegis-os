@@ -1,5 +1,7 @@
 # Aegis-OS: The Open Governance Runtime for Enterprise AI Agents
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+
 > **v0.2.0** — Now with native **Code Scalpel MCP** integration
 
 **Secure, auditable, governed code agents out of the box.** Your Claude / Cursor agents get surgical edits + the full Aegis Governance Loop — PII scrub, JIT tokens, budget breakers, and an immutable audit trail — with zero configuration.
@@ -483,3 +485,13 @@ team-specific task breakdowns and detailed Go/No-Go gate criteria.
 ---
 
 Maintained by [@tescolopio](https://github.com/tescolopio)
+
+---
+
+## License
+
+Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) for the full text.
+
+The **core runtime** (Governance Loop, adapters, watchdog, audit vault, OPA policy library) is open source under Apache 2.0 — free to use, modify, fork, and deploy in commercial and proprietary environments. Enterprise features (hosted control plane, advanced multi-agent UI, premium support contracts) are available commercially from [3D Tech Solutions](https://github.com/3D-Tech-Solutions).
+
+Contributions are welcome. By submitting a pull request you agree that your contribution is licensed under Apache 2.0 and you grant the implicit patent licence described in the licence terms. See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
