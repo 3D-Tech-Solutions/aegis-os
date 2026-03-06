@@ -75,6 +75,7 @@ services:
       - "19090:9090"
     volumes:
       - ./docs/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./docs/alerts.yml:/etc/prometheus/alerts.yml
 
   code-scalpel:
     image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim

@@ -456,3 +456,70 @@ async def test_integration_audit_event_on_breach_via_check_budget() -> None:
     assert event_kwargs["agent_type"] == "legal"
     assert "spent_usd" in event_kwargs
     assert "limit_usd" in event_kwargs
+
+
+# ---------------------------------------------------------------------------
+# W-prep-1: BudgetSession Temporal serialization primitives
+# ---------------------------------------------------------------------------
+
+
+class TestBudgetSessionSerialization:
+    """BudgetSession.serialize / BudgetSession.deserialize round-trip contract (W-prep-1)."""
+
+    def test_serialize_deserialize_full_roundtrip(self, enforcer: BudgetEnforcer) -> None:
+        """All fields must survive the serialize → deserialize cycle without loss."""
+        sid = uuid4()
+        session = enforcer.create_session(
+            sid, agent_type="finance", budget_limit_usd=Decimal("5.00")
+        )
+        enforcer.record_tokens(session.session_id, 100)
+
+        snapshot = session.serialize()
+        restored = BudgetSession.deserialize(snapshot)
+
+        assert restored.session_id == session.session_id
+        assert restored.agent_type == session.agent_type
+        assert restored.budget_limit_usd == session.budget_limit_usd
+        assert restored.cost_usd == session.cost_usd
+        assert restored.tokens_used == session.tokens_used
+        assert restored.alerts == session.alerts
+
+    def test_serialize_preserves_decimal_precision(self) -> None:
+        """Decimal fields must survive the cycle without floating-point drift."""
+        sid = uuid4()
+        session = BudgetSession(
+            session_id=sid,
+            agent_type="hr",
+            budget_limit_usd=Decimal("0.000002"),
+            cost_usd=Decimal("0.000001"),
+        )
+        restored = BudgetSession.deserialize(session.serialize())
+
+        assert restored.budget_limit_usd == Decimal("0.000002")
+        assert restored.cost_usd == Decimal("0.000001")
+
+    def test_serialize_alerts_list_is_independent_copy(self) -> None:
+        """Mutating the original session's alerts must not affect the snapshot."""
+        sid = uuid4()
+        session = BudgetSession(
+            session_id=sid,
+            agent_type="it",
+            budget_limit_usd=Decimal("1.00"),
+        )
+        snapshot = session.serialize()
+        session.alerts.append("post-snapshot alert")
+
+        assert "post-snapshot alert" not in snapshot["alerts"]
+
+    def test_deserialize_restores_independent_session(self) -> None:
+        """The deserialized session must be a new object, not a reference to the original."""
+        sid = uuid4()
+        session = BudgetSession(
+            session_id=sid,
+            agent_type="legal",
+            budget_limit_usd=Decimal("10.00"),
+        )
+        restored = BudgetSession.deserialize(session.serialize())
+        restored.alerts.append("mutation")
+
+        assert session.alerts == []

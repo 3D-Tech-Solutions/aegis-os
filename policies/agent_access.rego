@@ -57,7 +57,7 @@ allow if {
 # Orchestrator action instruction
 # ---------------------------------------------------------------------------
 
-# Default: reject (fires when allow = false, i.e. no allow rule matched).
+# Default: reject (fires when allow = false, i.e. no allow rule matched).\n\n# ---------------------------------------------------------------------------\n# Phase 2 preparation: HITL approval RBAC (S-prep-2)\n# ---------------------------------------------------------------------------\n\n# Registered RBAC roles and the workflow actions each role may perform.\n# Only principals whose role appears in this map may approve or deny a\n# pending-approval workflow.  Unrecognised roles are implicitly denied.\nrbac_capabilities := {\n    \"ops_lead\":       [\"approve\", \"deny\", \"view\"],\n    \"ops_member\":     [\"view\"],\n    \"service_account\": [],\n}\n\n# Allow approve or deny on a pending-approval workflow when the calling\n# principal holds the required RBAC capability.\n# input.principal_role must be one of the registered roles above;\n# input.action must be \"approve\" or \"deny\";\n# input.resource must be \"workflow:pending_approval\".\nallow if {\n    not input.token_expired\n    input.action in rbac_capabilities[input.principal_role]\n    input.resource == \"workflow:pending_approval\"\n}
 default action := "reject"
 
 # Permitted AND sensitive agent type → instruct orchestrator to re-mask.

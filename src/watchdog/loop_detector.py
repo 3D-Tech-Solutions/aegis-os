@@ -32,12 +32,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import TypedDict
 from uuid import UUID
 
 from src.audit_vault.logger import AuditLogger
 from src.config import settings
 
 _logger = AuditLogger(component="watchdog.loop_detector")
+
+
+# ---------------------------------------------------------------------------
+# Serialization TypedDicts (Phase 2 Temporal state persistence, W-prep-1/2)
+# ---------------------------------------------------------------------------
+
+
+class _StepSnapshot(TypedDict):
+    """Serialized form of a single :class:`StepRecord`."""
+
+    step_number: int
+    token_delta: int
+    signal: str
+    description: str
+
+
+class ExecutionCheckpoint(TypedDict):
+    """Serialized form of an :class:`ExecutionContext` for Temporal state persistence."""
+
+    session_id: str
+    agent_type: str
+    total_tokens: int
+    loop_detected: bool
+    intervention_required: bool
+    steps: list[_StepSnapshot]
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +290,65 @@ class LoopDetector:
     def get_context(self, session_id: UUID) -> ExecutionContext | None:
         """Return the execution context for *session_id*, or ``None`` if absent."""
         return self._contexts.get(session_id)
+
+    def checkpoint(self, session_id: UUID) -> ExecutionCheckpoint:
+        """Serialize the execution context to a plain-dict snapshot.
+
+        This is the Temporal state-persistence primitive (W-prep-1).  The
+        snapshot can be stored in Temporal workflow state and later passed to
+        :meth:`restore` to recreate the context after a process restart or
+        retry.
+
+        Raises:
+            KeyError: If no context exists for *session_id*.
+        """
+        ctx = self._get_context(session_id)
+        return ExecutionCheckpoint(
+            session_id=str(ctx.session_id),
+            agent_type=ctx.agent_type,
+            total_tokens=ctx.total_tokens,
+            loop_detected=ctx.loop_detected,
+            intervention_required=ctx.intervention_required,
+            steps=[
+                _StepSnapshot(
+                    step_number=step.step_number,
+                    token_delta=step.token_delta,
+                    signal=step.signal.value,
+                    description=step.description,
+                )
+                for step in ctx.steps
+            ],
+        )
+
+    def restore(self, snapshot: ExecutionCheckpoint) -> ExecutionContext:
+        """Restore an execution context from a checkpoint.
+
+        Any existing context registered for the same ``session_id`` is
+        replaced.  After this call, :meth:`record_step` can be called on the
+        restored context as if execution had never been interrupted.
+
+        Raises:
+            ValueError: If *snapshot* contains an invalid UUID or signal value.
+        """
+        session_id = UUID(snapshot["session_id"])
+        ctx = ExecutionContext(
+            session_id=session_id,
+            agent_type=snapshot["agent_type"],
+            total_tokens=snapshot["total_tokens"],
+            loop_detected=snapshot["loop_detected"],
+            intervention_required=snapshot["intervention_required"],
+            steps=[
+                StepRecord(
+                    step_number=step["step_number"],
+                    token_delta=step["token_delta"],
+                    signal=LoopSignal(step["signal"]),
+                    description=step["description"],
+                )
+                for step in snapshot["steps"]
+            ],
+        )
+        self._contexts[session_id] = ctx
+        return ctx
 
     # ------------------------------------------------------------------
     # Private helpers

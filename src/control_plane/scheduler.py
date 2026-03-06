@@ -17,6 +17,7 @@
 import asyncio
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import ClassVar
 from uuid import UUID, uuid4
 
 from src.audit_vault.logger import AuditLogger
@@ -88,8 +89,86 @@ class AgentScheduler:
         """Simulate running an agent workflow (stub for Temporal integration)."""
         handle.status = WorkflowStatus.RUNNING
         _logger.info("workflow.started", workflow_id=str(handle.workflow_id))
-        # Temporal workflow execution would be triggered here
+        # Temporal workflow execution will be triggered here in Phase 2 (P2-1).
         await asyncio.sleep(0)  # yield to event loop
         handle.status = WorkflowStatus.COMPLETED
         _logger.info("workflow.completed", workflow_id=str(handle.workflow_id))
         return handle
+
+
+class AgentTaskWorkflow:
+    """Temporal AgentTaskWorkflow scaffold — Phase 2 (P2-1) implements all activities.
+
+    Maps the five Aegis Governance Loop stages to named Temporal activities:
+
+    1. ``PrePIIScrub``   — strip PII from the inbound prompt.
+    2. ``PolicyEval``    — evaluate the OPA allow/deny decision.
+    3. ``JITTokenIssue`` — mint a scoped short-lived session token.
+    4. ``LLMInvoke``     — call the selected LLM adapter.
+    5. ``PostSanitize``  — strip PII from the LLM response.
+
+    All five activity methods raise :exc:`NotImplementedError` until Phase 2
+    (P2-1) replaces each stub.  Any accidental invocation before Phase 2 is
+    complete will fail loudly rather than silently returning incorrect results.
+    """
+
+    ACTIVITY_NAMES: ClassVar[tuple[str, ...]] = (
+        "PrePIIScrub",
+        "PolicyEval",
+        "JITTokenIssue",
+        "LLMInvoke",
+        "PostSanitize",
+    )
+
+    async def run(self, task_id: str, agent_type: str, prompt: str) -> str:
+        """Execute the five-stage Aegis Governance Loop as a durable Temporal workflow.
+
+        Activity execution order:
+        PrePIIScrub → PolicyEval → JITTokenIssue → LLMInvoke → PostSanitize.
+
+        Raises:
+            NotImplementedError: Until Phase 2 (P2-1) replaces all activity stubs.
+        """
+        raise NotImplementedError(
+            "AgentTaskWorkflow.run: implement five-stage activity chain in Phase 2 (P2-1)"
+        )
+
+    async def pre_pii_scrub(self, prompt: str) -> str:
+        """PrePIIScrub activity — redact PII from the inbound prompt.
+
+        Raises:
+            NotImplementedError: Until Phase 2 (P2-1) implements this activity.
+        """
+        raise NotImplementedError("PrePIIScrub: implement in Phase 2 (P2-1)")
+
+    async def policy_eval(self, agent_type: str, sanitized_prompt: str) -> bool:
+        """PolicyEval activity — evaluate OPA policy and return allow/deny.
+
+        Raises:
+            NotImplementedError: Until Phase 2 (P2-1) implements this activity.
+        """
+        raise NotImplementedError("PolicyEval: implement in Phase 2 (P2-1)")
+
+    async def jit_token_issue(self, agent_type: str, requester_id: str) -> str:
+        """JITTokenIssue activity — mint a scoped JIT session token.
+
+        Raises:
+            NotImplementedError: Until Phase 2 (P2-1) implements this activity.
+        """
+        raise NotImplementedError("JITTokenIssue: implement in Phase 2 (P2-1)")
+
+    async def llm_invoke(self, token: str, sanitized_prompt: str) -> str:
+        """LLMInvoke activity — forward the sanitized prompt to the LLM adapter.
+
+        Raises:
+            NotImplementedError: Until Phase 2 (P2-1) implements this activity.
+        """
+        raise NotImplementedError("LLMInvoke: implement in Phase 2 (P2-1)")
+
+    async def post_sanitize(self, llm_response: str) -> str:
+        """PostSanitize activity — redact PII from the LLM response.
+
+        Raises:
+            NotImplementedError: Until Phase 2 (P2-1) implements this activity.
+        """
+        raise NotImplementedError("PostSanitize: implement in Phase 2 (P2-1)")

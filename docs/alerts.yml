@@ -1,0 +1,25 @@
+# Aegis-OS Prometheus Alert Rules
+# Loaded by Prometheus via rule_files in prometheus.yml.
+# Verified against the running Prometheus container as part of the W-prep-3
+# Phase 2 preparation checklist item.
+
+groups:
+  - name: aegis_hitl
+    rules:
+      - alert: HITLApprovalStuck
+        # Fires when a workflow has been in PendingApproval for more than 24 hours.
+        # The aegis_hitl_stuck_seconds gauge is set by the Watchdog subsystem
+        # (src/watchdog/metrics.py) whenever a workflow enters PendingApproval.
+        expr: aegis_hitl_stuck_seconds > 86400
+        for: 1m
+        labels:
+          severity: warning
+          team: watchdog
+        annotations:
+          summary: "HITL approval workflow stuck for >24 h"
+          description: >-
+            Workflow {{ $labels.workflow_id }} has been waiting for human
+            approval for {{ $value | humanizeDuration }}. Investigate via the
+            Temporal UI (http://localhost:18080) and either approve, deny, or
+            escalate to an ops_lead.
+          runbook: "docs/runbooks/hitl-stuck-approval.md"

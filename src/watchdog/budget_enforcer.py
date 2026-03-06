@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import ClassVar
+from typing import ClassVar, TypedDict
 from uuid import UUID
 
 from src.audit_vault.logger import AuditLogger
@@ -33,6 +33,21 @@ from src.watchdog.metrics import budget_remaining as _budget_remaining
 from src.watchdog.metrics import tokens_consumed as _tokens_consumed
 
 _logger = AuditLogger(component="watchdog.budget")
+
+
+class BudgetSessionSnapshot(TypedDict):
+    """Serialized form of a :class:`BudgetSession` for Temporal state persistence.
+
+    All :class:`~decimal.Decimal` values are stored as their canonical string
+    representation to preserve exactness across serialization round-trips.
+    """
+
+    session_id: str
+    agent_type: str
+    budget_limit_usd: str
+    tokens_used: int
+    cost_usd: str
+    alerts: list[str]
 
 
 @dataclass
@@ -45,6 +60,38 @@ class BudgetSession:
     tokens_used: int = 0
     cost_usd: Decimal = field(default_factory=lambda: Decimal("0"))
     alerts: list[str] = field(default_factory=list)
+
+    def serialize(self) -> BudgetSessionSnapshot:
+        """Serialize this session to a snapshot dict for Temporal state persistence.
+
+        All :class:`~decimal.Decimal` fields are stored as canonical strings to
+        prevent representation error when the snapshot crosses a serialization
+        boundary (e.g. JSON, Temporal workflow state).
+        """
+        return BudgetSessionSnapshot(
+            session_id=str(self.session_id),
+            agent_type=self.agent_type,
+            budget_limit_usd=str(self.budget_limit_usd),
+            tokens_used=self.tokens_used,
+            cost_usd=str(self.cost_usd),
+            alerts=list(self.alerts),
+        )
+
+    @classmethod
+    def deserialize(cls, snapshot: BudgetSessionSnapshot) -> BudgetSession:
+        """Restore a :class:`BudgetSession` from a snapshot produced by :meth:`serialize`.
+
+        Raises:
+            ValueError: If a UUID or Decimal field cannot be parsed.
+        """
+        return cls(
+            session_id=UUID(snapshot["session_id"]),
+            agent_type=snapshot["agent_type"],
+            budget_limit_usd=Decimal(snapshot["budget_limit_usd"]),
+            tokens_used=snapshot["tokens_used"],
+            cost_usd=Decimal(snapshot["cost_usd"]),
+            alerts=list(snapshot["alerts"]),
+        )
 
 
 class BudgetExceededError(Exception):

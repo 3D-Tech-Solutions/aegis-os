@@ -72,3 +72,13 @@ orchestrator_errors: Counter = Counter(
     "labelled by stage name and agent type.",
     ["stage", "agent_type"],
 )
+
+# ---------------------------------------------------------------------------
+# HITL stuck-approval gauge (Phase 2 W-prep-3)
+# ---------------------------------------------------------------------------
+hitl_stuck_seconds: Gauge = Gauge(
+    "aegis_hitl_stuck_seconds",
+    "Seconds a workflow has been in the PendingApproval state. "
+    "Alert fires when this exceeds 86400 (24 h).",
+    ["workflow_id"],
+)

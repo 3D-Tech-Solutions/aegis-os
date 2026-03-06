@@ -120,6 +120,16 @@
         "stage": {
             "type": "string",
             "description": "Named pipeline stage at which this event was emitted (e.g. 'pre-pii-scrub', 'policy-eval')."
+        },
+        "traceparent": {
+            "type": "string",
+            "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+            "description": "W3C Trace Context traceparent header propagated from the active OTel span. Format: 00-{trace_id}-{span_id}-{flags}."
+        },
+        "lifecycle_status": {
+            "type": "string",
+            "enum": ["started", "retried", "pending-approval", "approved", "denied", "completed", "failed"],
+            "description": "Phase 2 task lifecycle transition state emitted by AgentTaskWorkflow Temporal activities."
         }
     }
 }

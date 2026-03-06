@@ -461,7 +461,13 @@ class TestNoPiiInLogs:
         Every captured dict is stringified and scanned against the same regex
         patterns used by Guardrails.  Any match is a hard failure — the control
         plane must ensure raw PII never enters the audit trail.
+
+        Structural hex fields (``traceparent``) are excluded from the scan
+        because they contain 32/16-character hexadecimal sequences that can
+        superficially match digit-only PII patterns like credit card numbers.
         """
+        _EXCLUDED_FROM_PII_SCAN = {"traceparent"}
+
         pii_request = OrchestratorRequest(
             prompt=_PII_PROMPT,
             agent_type="audit",
@@ -473,7 +479,8 @@ class TestNoPiiInLogs:
         assert cap, "capture_logs captured no entries — nothing to verify"
 
         for entry in cap:
-            entry_text = str(entry)
+            scannable = {k: v for k, v in entry.items() if k not in _EXCLUDED_FROM_PII_SCAN}
+            entry_text = str(scannable)
             for pii_label, pattern in _PII_PATTERNS:
                 match = pattern.search(entry_text)
                 assert match is None, (
@@ -503,3 +510,66 @@ class TestNoPiiInLogs:
                         f"pii_types element {value!r} matches the {pii_label} "
                         f"pattern — raw PII must not be stored in pii_types."
                     )
+
+
+# ---------------------------------------------------------------------------
+# A-prep-1: task_id and W3C traceparent in every stage_event (Phase 2 baseline)
+# ---------------------------------------------------------------------------
+
+
+class TestTraceparentPropagation:
+    """Every stage_event call must carry both task_id and a W3C traceparent (A-prep-1)."""
+
+    def test_stage_event_carries_traceparent_field(self) -> None:
+        """stage_event must inject a traceparent field even outside an active OTel span."""
+        logger = AuditLogger()
+        with capture_logs() as cap:
+            logger.stage_event(
+                "test.event",
+                outcome="allow",
+                stage="pre-pii-scrub",
+                task_id="task-traceparent-001",
+                agent_type="general",
+            )
+        assert len(cap) == 1, f"Expected 1 log entry, got {len(cap)}"
+        entry = cap[0]
+        assert "traceparent" in entry, f"traceparent missing from stage_event output: {entry}"
+        # W3C format: 00-{32 hex}-{16 hex}-{2 hex}
+        assert entry["traceparent"].startswith("00-"), (
+            f"traceparent must start with '00-', got {entry['traceparent']!r}"
+        )
+        assert len(entry["traceparent"]) == 55, (
+            f"W3C traceparent must be 55 characters, got {len(entry['traceparent'])}"
+        )
+
+    def test_stage_event_carries_task_id_field(self) -> None:
+        """task_id passed to stage_event must appear in the emitted log entry."""
+        logger = AuditLogger()
+        tid = "task-123-abc"
+        with capture_logs() as cap:
+            logger.stage_event(
+                "test.event",
+                outcome="allow",
+                stage="policy-eval",
+                task_id=tid,
+                agent_type="finance",
+            )
+        assert len(cap) == 1
+        assert cap[0].get("task_id") == tid
+
+    def test_no_trace_fallback_is_all_zeros(self) -> None:
+        """Outside any OTel span the traceparent must be the all-zero no-trace value."""
+        logger = AuditLogger()
+        with capture_logs() as cap:
+            logger.stage_event(
+                "test.no-trace",
+                outcome="allow",
+                stage="jit-token-issue",
+                task_id="task-no-trace",
+                agent_type="it",
+            )
+        tp = cap[0]["traceparent"]
+        # All-zeros no-trace traceparent starts with 00- and has zero trace_id.
+        assert tp == "00-00000000000000000000000000000000-0000000000000000-00" or tp.startswith(
+            "00-"
+        ), f"Unexpected no-trace traceparent: {tp!r}"

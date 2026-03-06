@@ -226,6 +226,27 @@ The following risks are **accepted** for v0.1 development environments and **mus
 
 ---
 
+## Phase 2 Risks
+
+The following new attack surfaces are introduced by the Phase 2 Temporal integration and must be addressed before Gate 2.
+
+### jti Reuse Across Temporal Retries
+
+**Threat**: `JITTokenIssue` is a Temporal activity. When Temporal retries a failed activity, it may re-invoke `SessionManager.issue_token()` with the same input parameters. Depending on how the JIT token is constructed, this could yield a token with a reused `jti` claim.
+
+**Impact**: Elevation of Privilege. The session integrity guarantee (one token per request, short-lived, unique `jti`) is violated. A replay attack becomes possible if an adversary captures the first token before the retry.
+
+**Root cause**: Temporal activity retries are transparent to the application code; the `jit_token_issue` activity stub does not receive any retry-context signal to force a fresh `jti`.
+
+**Planned mitigation for Phase 2 (P2-1)**:
+- `jit_token_issue` must derive its `jti` from a combination of the stable `task_id` **and** the Temporal activity attempt number (injected via `activity.info().attempt`). This guarantees a unique `jti` on every retry without external coordination.
+- `test_jit_token.py` must include a regression test asserting that two successive calls to `issue_token` with identical input produce distinct `jti` values.
+- Any token with a `jti` already present in the audit log for the same `task_id` must be rejected at the validation step.
+
+**Interim mitigation (Phase 2 prep)**: `jit_token_issue` is a `NotImplementedError` stub — no tokens are issued. The risk is theoretical until the stub is implemented.
+
+---
+
 ## Out of Scope
 
 - **Model-level jailbreaks** — Aegis-OS is not responsible for the internal alignment of the underlying LLM. The Guardrails layer is an application-level defense, not a replacement for model safety training.

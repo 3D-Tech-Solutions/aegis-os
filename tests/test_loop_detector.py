@@ -666,3 +666,75 @@ class TestHumanRequiredSignal:
         except LoopApprovalError:
             pass  # expected
 
+
+# ---------------------------------------------------------------------------
+# W-prep-2: LoopDetector Temporal serialization primitives
+# ---------------------------------------------------------------------------
+
+
+class TestLoopDetectorSerialization:
+    """LoopDetector.checkpoint / LoopDetector.restore round-trip contract (W-prep-2)."""
+
+    def test_checkpoint_restore_full_roundtrip(self) -> None:
+        """All context fields and steps must survive the checkpoint → restore cycle."""
+        det = LoopDetector(max_agent_steps=10, max_token_velocity=1_000)
+        sid = uuid4()
+        det.create_context(sid, agent_type="finance")
+        det.record_step(sid, token_delta=50, signal=LoopSignal.PROGRESS)
+        det.record_step(sid, token_delta=30, signal=LoopSignal.NO_PROGRESS)
+
+        snapshot = det.checkpoint(sid)
+
+        det2 = LoopDetector(max_agent_steps=10, max_token_velocity=1_000)
+        ctx = det2.restore(snapshot)
+
+        assert ctx.session_id == sid
+        assert ctx.agent_type == "finance"
+        assert ctx.total_tokens == 80
+        assert len(ctx.steps) == 2
+        assert ctx.steps[0].signal == LoopSignal.PROGRESS
+        assert ctx.steps[1].signal == LoopSignal.NO_PROGRESS
+        assert not ctx.loop_detected
+
+    def test_step_counter_survives_serialize_cycle(self) -> None:
+        """NO_PROGRESS streak continues from the restored context — circuit trips on step 3."""
+        det = LoopDetector(max_agent_steps=3, max_token_velocity=1_000)
+        sid = uuid4()
+        det.create_context(sid, agent_type="it")
+        det.record_step(sid, token_delta=10, signal=LoopSignal.NO_PROGRESS)
+        det.record_step(sid, token_delta=10, signal=LoopSignal.NO_PROGRESS)
+
+        snapshot = det.checkpoint(sid)
+
+        det2 = LoopDetector(max_agent_steps=3, max_token_velocity=1_000)
+        restored_ctx = det2.restore(snapshot)
+
+        # Two NO_PROGRESS steps already in the context — the third must trip the circuit.
+        with pytest.raises(LoopDetectedError):
+            det2.record_step(restored_ctx.session_id, token_delta=10, signal=LoopSignal.NO_PROGRESS)
+
+    def test_checkpoint_missing_session_raises_key_error(self) -> None:
+        """checkpoint() must raise KeyError for an unknown session_id."""
+        det = LoopDetector()
+        with pytest.raises(KeyError):
+            det.checkpoint(uuid4())
+
+    def test_restore_replaces_existing_context(self) -> None:
+        """Restoring a snapshot for an existing session_id replaces the old context."""
+        det = LoopDetector(max_agent_steps=10, max_token_velocity=1_000)
+        sid = uuid4()
+        det.create_context(sid, agent_type="hr")
+        det.record_step(sid, token_delta=99, signal=LoopSignal.NO_PROGRESS)
+
+        # Take a snapshot before the bad step is recorded.
+        snapshot = det.checkpoint(sid)
+
+        # Add more steps to the live context.
+        det.record_step(sid, token_delta=1, signal=LoopSignal.PROGRESS)
+
+        # Restore from the earlier snapshot — should have only 1 step.
+        restored_ctx = det.restore(snapshot)
+        assert len(restored_ctx.steps) == 1
+        assert restored_ctx.steps[0].token_delta == 99
+
+

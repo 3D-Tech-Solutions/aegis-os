@@ -1,17 +1,3 @@
-# Copyright 2026 Tim Escolopio / 3D Tech Solutions
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 """Audit Vault Logger - high-fidelity, append-only trace logging via structlog.
 
 Note: This module does NOT configure the global OpenTelemetry TracerProvider at
@@ -21,6 +7,7 @@ provider before any ``AuditLogger`` instance is created.
 """
 
 from collections import defaultdict
+from enum import StrEnum
 from threading import Lock
 
 import structlog
@@ -40,6 +27,23 @@ structlog.configure(
     context_class=dict,
     logger_factory=structlog.PrintLoggerFactory(),
 )
+
+
+class LifecycleEvent(StrEnum):
+    """Audit event name constants for Phase 2 task lifecycle transitions (A-prep-2).
+
+    These constants are defined here so every team can reference a single
+    vocabulary before the Phase 2 implementation ships.  They map directly
+    to the ``lifecycle_status`` values added to ``docs/audit-event-schema.json``.
+    """
+
+    STARTED = "task.started"
+    RETRIED = "task.retried"
+    PENDING_APPROVAL = "task.pending_approval"
+    APPROVED = "task.approved"
+    DENIED = "task.denied"
+    COMPLETED = "task.completed"
+    FAILED = "task.failed"
 
 
 class AuditLogger:
@@ -73,6 +77,23 @@ class AuditLogger:
     def error(self, event: str, **kwargs: object) -> None:
         """Log an error audit event."""
         self._log.error(event, **kwargs)
+
+    @staticmethod
+    def _current_traceparent() -> str:
+        """Return the W3C ``traceparent`` header for the currently active OTel span.
+
+        Format: ``00-{trace_id:032x}-{span_id:016x}-{flags:02x}``
+
+        If no valid span is active (e.g. outside a traced request or in unit
+        tests without a configured provider), returns the all-zero no-trace
+        traceparent ``00-000...000-000...000-00``.
+        """
+        span = trace.get_current_span()
+        ctx = span.get_span_context()
+        if not ctx.is_valid:
+            return "00-00000000000000000000000000000000-0000000000000000-00"
+        sampled = "01" if (int(ctx.trace_flags) & 0x01) else "00"
+        return f"00-{ctx.trace_id:032x}-{ctx.span_id:016x}-{sampled}"
 
     def audit(self, event: str, agent_id: str, action: str, **kwargs: object) -> None:
         """Log a security-relevant audit event with agent identity and action."""
@@ -120,6 +141,8 @@ class AuditLogger:
             sequence_number = self._seq_counters[task_id]
             self._seq_counters[task_id] += 1
 
+        traceparent = self._current_traceparent()
+
         if outcome == "error":
             self.error(
                 event,
@@ -128,6 +151,7 @@ class AuditLogger:
                 task_id=task_id,
                 agent_type=agent_type,
                 sequence_number=sequence_number,
+                traceparent=traceparent,
                 **kwargs,
             )
         elif outcome == "deny":
@@ -138,6 +162,7 @@ class AuditLogger:
                 task_id=task_id,
                 agent_type=agent_type,
                 sequence_number=sequence_number,
+                traceparent=traceparent,
                 **kwargs,
             )
         else:
@@ -148,5 +173,6 @@ class AuditLogger:
                 task_id=task_id,
                 agent_type=agent_type,
                 sequence_number=sequence_number,
+                traceparent=traceparent,
                 **kwargs,
             )
