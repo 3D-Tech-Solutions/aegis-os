@@ -1711,15 +1711,18 @@ Request schema, response schema, error codes, and timeout behaviour.
 
 #### F2-3 — Write `docs/runbooks/hitl-stuck-approval.md`
 
-**Status: PARTIAL (2026-03-09 automated validation complete; walkthrough gate open)**
+**Status: COMPLETE (2026-03-09)**
 
 The skeleton file existed before the gap pass. The runbook content was updated
-to match the live task-based HITL endpoints on 2026-03-07. Automated section
-and cross-reference validation passed on 2026-03-09 via
-`tests/test_runbook_completeness.py`, `tests/test_runbook_cross_references.py`,
-and `tests/test_docs_links.py`. The non-author walkthrough gate still remains,
-and the roadmap requirement referencing `tests/test_runbook_commands.py` cannot
-be treated as satisfied because that harness does not yet exist in-repo.
+to match the live task-based HITL endpoints on 2026-03-07. On 2026-03-09 the
+remaining gate evidence was completed:
+
+- automated section and cross-reference validation passed via
+  `tests/test_runbook_completeness.py`, `tests/test_runbook_cross_references.py`,
+  `tests/test_docs_links.py`, and `tests/test_runbook_commands.py`
+- a non-author live walkthrough was executed against the local Temporal/API
+  stack using the current checkout
+- sign-off was recorded in the Gate 2 review issue: GitHub issue `#2`
 
 Diagnosis, escalation path, and resolution steps.
 
@@ -1729,14 +1732,10 @@ Diagnosis, escalation path, and resolution steps.
   `docs/runbooks/hitl-stuck-approval.md`; asserts it contains all four
   required sections: `Symptoms`, `Diagnosis`, `Escalation`, `Resolution`.
   A missing section heading is a CI failure.
-- **Runbook walkthrough test:** one team member (not the author) must execute
-  every step in the runbook against a dev environment where a workflow has
-  been deliberately stuck in `PendingApproval`; record any step that cannot
-  be executed and raise it as a blocking issue before Gate 2.
-- **Command validity:** every shell command documented in the runbook must be
-  extracted by `tests/test_runbook_commands.py` (via regex) and executed in
-  the dev environment; any command that returns a non-zero exit code is a
-  test failure.
+- **Runbook walkthrough test:** satisfied on 2026-03-09; live walkthrough sign-
+  off recorded in Gate 2 review issue `#2`.
+- **Command validity:** satisfied on 2026-03-09 by
+  `tests/test_runbook_commands.py`.
 - **Prometheus alert link:** assert the runbook URL appears in the
   `aegis_hitl_stuck` Prometheus alert annotation (cross-verified with W2-3
   testing requirement); the link must resolve to the actual file.
@@ -1745,15 +1744,19 @@ Diagnosis, escalation path, and resolution steps.
 
 #### F2-4 — Update `docs/runbooks/budget-exceeded.md` to cover the HITL approval flow
 
-**Status: PARTIAL (2026-03-09 automated validation complete; walkthrough gate open)**
+**Status: COMPLETE (2026-03-09)**
 
 The runbook existed but still referenced a non-existent `/api/v1/approvals`
-endpoint. The Phase 2 HITL flow was updated on 2026-03-07. Automated content
-and cross-reference validation passed on 2026-03-09 via
-`tests/test_runbook_completeness.py`, `tests/test_runbook_cross_references.py`,
-and `tests/test_docs_links.py`. The walkthrough gate still remains, and the
-roadmap requirement referencing `tests/test_runbook_budget_version.py` cannot
-be treated as satisfied because that harness does not yet exist in-repo.
+endpoint. The Phase 2 HITL flow was updated on 2026-03-07. On 2026-03-09 the
+remaining gate evidence was completed:
+
+- automated content and cross-reference validation passed via
+  `tests/test_runbook_completeness.py`, `tests/test_runbook_cross_references.py`,
+  `tests/test_docs_links.py`, `tests/test_runbook_commands.py`, and
+  `tests/test_runbook_budget_version.py`
+- a non-author live walkthrough of the approve/deny HITL flow was executed
+  against the local Temporal/API stack using the current checkout
+- sign-off was recorded in the Gate 2 review issue: GitHub issue `#2`
 
 ---
 
@@ -1769,25 +1772,21 @@ be treated as satisfied because that harness does not yet exist in-repo.
   outage completeness, and ordering enforcement suites are still truly not
   started.
 - **Frontend & DevEx**: Partial. Automated doc-validation now passes for the
-  deployment guide, API reference, and HITL runbooks, but walkthrough sign-off,
-  peer review, and two roadmap-referenced test harnesses
-  (`tests/test_runbook_commands.py`, `tests/test_runbook_budget_version.py`)
-  are still missing.
+  deployment guide, API reference, and HITL runbooks. The HITL and budget
+  runbook walkthrough sign-offs are recorded in Gate 2 review issue `#2` and
+  the missing runbook test harnesses now exist. Remaining Frontend & DevEx Gate
+  2 work is limited to the deployment-guide/API-reference manual review items.
 
 **Testing requirements**
 
-- **Diff against Phase 1 version:** `tests/test_runbook_budget_version.py`
-  asserts `docs/runbooks/budget-exceeded.md` contains the strings
-  `PendingApproval`, `approve`, and `deny`; a runbook missing these terms
-  has not been updated for Phase 2 HITL flow and the test fails.
+- **Diff against Phase 1 version:** satisfied on 2026-03-09 by
+  `tests/test_runbook_budget_version.py`.
 - **Section completeness check:** assert the runbook contains a
   `HITL Approval Flow` section (or equivalent heading) describing both the
   approval and denial paths; `tests/test_runbook_completeness.py` is
   extended to verify this.
-- **Walkthrough test:** same walkthrough requirement as F2-3 — one non-author
-  team member must execute the document's steps against a dev environment
-  that has triggered a budget-exceeded HITL hold; any gap between the
-  documented steps and actual system behaviour is a blocking issue.
+- **Walkthrough test:** satisfied on 2026-03-09; live walkthrough sign-off
+  recorded in Gate 2 review issue `#2`.
 - **Cross-reference accuracy:** every API endpoint URL referenced in the
   runbook must be verifiable against `docs/api-reference.md`;
   `tests/test_runbook_cross_references.py` diffs endpoint paths between
