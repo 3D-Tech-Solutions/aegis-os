@@ -1642,11 +1642,13 @@ Events: `started`, `retried` (with retry count), `pending-approval`,
 
 #### F2-1 — Add Temporal UI link, workflow state diagram, and recovery procedure to `docs/deployment-guide.md`
 
-**Status: PARTIAL (2026-03-07 gap pass)**
+**Status: PARTIAL (2026-03-09 automated validation complete; manual gate open)**
 
 The deployment guide already documented Temporal service ports, but the
 Phase 2 workflow operations content was incomplete. A live-contract update
-landed on 2026-03-07; docs tests and peer-review sign-off still remain.
+landed on 2026-03-07. Automated validation passed on 2026-03-09 via
+`tests/test_deployment_guide_completeness.py` and `tests/test_docs_links.py`.
+Platform peer-review sign-off still remains before this item can be closed.
 
 **Testing requirements**
 
@@ -1672,11 +1674,15 @@ landed on 2026-03-07; docs tests and peer-review sign-off still remain.
 
 #### F2-2 — HITL approval API contract in `docs/api-reference.md`
 
-**Status: PARTIAL (2026-03-07 gap pass)**
+**Status: PARTIAL (2026-03-09 automated validation complete; manual gate open)**
 
 `docs/api-reference.md` existed as a placeholder, but it used the wrong
 resource shape (`workflow_id` instead of `task_id`). A live-contract update
-landed on 2026-03-07; docs-side conformance tests still remain.
+landed on 2026-03-07. Automated schema and contract validation passed on
+2026-03-09 via `tests/test_api_reference_schemas.py`,
+`tests/test_api_reference_completeness.py`, and
+`tests/test_hitl_timeout_contract.py`. Manual review of the published contract
+still remains before this item can be closed.
 
 Request schema, response schema, error codes, and timeout behaviour.
 
@@ -1705,11 +1711,15 @@ Request schema, response schema, error codes, and timeout behaviour.
 
 #### F2-3 — Write `docs/runbooks/hitl-stuck-approval.md`
 
-**Status: PARTIAL (2026-03-07 gap pass)**
+**Status: PARTIAL (2026-03-09 automated validation complete; walkthrough gate open)**
 
 The skeleton file existed before the gap pass. The runbook content was updated
-to match the live task-based HITL endpoints on 2026-03-07, but command
-walkthrough validation and non-author sign-off still remain.
+to match the live task-based HITL endpoints on 2026-03-07. Automated section
+and cross-reference validation passed on 2026-03-09 via
+`tests/test_runbook_completeness.py`, `tests/test_runbook_cross_references.py`,
+and `tests/test_docs_links.py`. The non-author walkthrough gate still remains,
+and the roadmap requirement referencing `tests/test_runbook_commands.py` cannot
+be treated as satisfied because that harness does not yet exist in-repo.
 
 Diagnosis, escalation path, and resolution steps.
 
@@ -1735,11 +1745,15 @@ Diagnosis, escalation path, and resolution steps.
 
 #### F2-4 — Update `docs/runbooks/budget-exceeded.md` to cover the HITL approval flow
 
-**Status: PARTIAL (2026-03-07 gap pass)**
+**Status: PARTIAL (2026-03-09 automated validation complete; walkthrough gate open)**
 
 The runbook existed but still referenced a non-existent `/api/v1/approvals`
-endpoint. The Phase 2 HITL flow was updated on 2026-03-07; walkthrough and
-cross-reference validation still remain.
+endpoint. The Phase 2 HITL flow was updated on 2026-03-07. Automated content
+and cross-reference validation passed on 2026-03-09 via
+`tests/test_runbook_completeness.py`, `tests/test_runbook_cross_references.py`,
+and `tests/test_docs_links.py`. The walkthrough gate still remains, and the
+roadmap requirement referencing `tests/test_runbook_budget_version.py` cannot
+be treated as satisfied because that harness does not yet exist in-repo.
 
 ---
 
@@ -1754,9 +1768,11 @@ cross-reference validation still remain.
   vocabulary exist at the logger layer, but the Phase 2 Temporal propagation,
   outage completeness, and ordering enforcement suites are still truly not
   started.
-- **Frontend & DevEx**: Partial. The core docs now match the live HITL task
-  endpoints, but doc-validation tests, walkthrough sign-off, and some Gate 2
-  infrastructure expectations still remain.
+- **Frontend & DevEx**: Partial. Automated doc-validation now passes for the
+  deployment guide, API reference, and HITL runbooks, but walkthrough sign-off,
+  peer review, and two roadmap-referenced test harnesses
+  (`tests/test_runbook_commands.py`, `tests/test_runbook_budget_version.py`)
+  are still missing.
 
 **Testing requirements**
 
