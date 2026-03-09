@@ -1642,13 +1642,18 @@ Events: `started`, `retried` (with retry count), `pending-approval`,
 
 #### F2-1 — Add Temporal UI link, workflow state diagram, and recovery procedure to `docs/deployment-guide.md`
 
-**Status: PARTIAL (2026-03-09 automated validation complete; manual gate open)**
+**Status: COMPLETE (2026-03-09)**
 
 The deployment guide already documented Temporal service ports, but the
 Phase 2 workflow operations content was incomplete. A live-contract update
-landed on 2026-03-07. Automated validation passed on 2026-03-09 via
-`tests/test_deployment_guide_completeness.py` and `tests/test_docs_links.py`.
-Platform peer-review sign-off still remains before this item can be closed.
+landed on 2026-03-07. On 2026-03-09 the remaining gate evidence was completed:
+
+- automated validation passed via `tests/test_deployment_guide_completeness.py`
+  and `tests/test_docs_links.py`
+- manual deployment-guide review confirmed the Temporal UI link, workflow state
+  diagram, and numbered recovery procedure match the live task-based workflow
+  model
+- sign-off was recorded in the Gate 2 review issue: GitHub issue `#2`
 
 **Testing requirements**
 
@@ -1665,24 +1670,26 @@ Platform peer-review sign-off still remains before this item can be closed.
   recovery procedure section; `tests/test_deployment_guide_completeness.py`
   asserts the section contains the words `restart`, `Temporal`, and
   `task_id` — a section that omits these indicates an incomplete procedure.
-- **Peer review gate:** the Temporal additions to `docs/deployment-guide.md`
-  must be reviewed by a team member from the Platform team (who owns
-  Temporal integration) before the F2-1 checkbox is ticked. Reviewer sign-
-  off is recorded in the Gate 2 review issue.
+- **Peer review gate:** satisfied on 2026-03-09; reviewer sign-off recorded in
+  Gate 2 review issue `#2`.
 
 ---
 
 #### F2-2 — HITL approval API contract in `docs/api-reference.md`
 
-**Status: PARTIAL (2026-03-09 automated validation complete; manual gate open)**
+**Status: COMPLETE (2026-03-09)**
 
 `docs/api-reference.md` existed as a placeholder, but it used the wrong
 resource shape (`workflow_id` instead of `task_id`). A live-contract update
-landed on 2026-03-07. Automated schema and contract validation passed on
-2026-03-09 via `tests/test_api_reference_schemas.py`,
-`tests/test_api_reference_completeness.py`, and
-`tests/test_hitl_timeout_contract.py`. Manual review of the published contract
-still remains before this item can be closed.
+landed on 2026-03-07. On 2026-03-09 the remaining gate evidence was completed:
+
+- automated schema and contract validation passed via
+  `tests/test_api_reference_schemas.py`,
+  `tests/test_api_reference_completeness.py`, and
+  `tests/test_hitl_timeout_contract.py`
+- manual API-reference review confirmed the live `task_id`-based approve/deny
+  contract, status codes, timeout behavior, and admin-only authorization notes
+- sign-off was recorded in the Gate 2 review issue: GitHub issue `#2`
 
 Request schema, response schema, error codes, and timeout behaviour.
 
@@ -1771,11 +1778,10 @@ remaining gate evidence was completed:
   vocabulary exist at the logger layer, but the Phase 2 Temporal propagation,
   outage completeness, and ordering enforcement suites are still truly not
   started.
-- **Frontend & DevEx**: Partial. Automated doc-validation now passes for the
-  deployment guide, API reference, and HITL runbooks. The HITL and budget
-  runbook walkthrough sign-offs are recorded in Gate 2 review issue `#2` and
-  the missing runbook test harnesses now exist. Remaining Frontend & DevEx Gate
-  2 work is limited to the deployment-guide/API-reference manual review items.
+- **Frontend & DevEx**: Complete for Gate 2 scope. Automated doc-validation now
+  passes for the deployment guide, API reference, and HITL runbooks; manual
+  review and walkthrough sign-offs are recorded in Gate 2 review issue `#2`;
+  the missing runbook test harnesses now exist in-repo.
 
 **Testing requirements**
 
