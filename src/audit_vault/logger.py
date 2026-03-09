@@ -7,17 +7,36 @@ provider before any ``AuditLogger`` instance is created.
 """
 
 from collections import defaultdict
+from collections.abc import MutableMapping
+from datetime import UTC, datetime
 from enum import StrEnum
 from threading import Lock
+from typing import Any
 
 import structlog
 from opentelemetry import trace
+
+
+def _format_utc_timestamp(value: datetime) -> str:
+    """Return an ISO-8601 UTC timestamp string with microsecond precision."""
+    normalized = value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return normalized.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _add_timestamp_if_missing(
+    _logger: Any,
+    _method_name: str,
+    event_dict: MutableMapping[str, Any],
+) -> MutableMapping[str, Any]:
+    """Add a UTC timestamp only when the caller did not provide one explicitly."""
+    event_dict.setdefault("timestamp", _format_utc_timestamp(datetime.now(UTC)))
+    return event_dict
 
 structlog.configure(
     processors=[
         structlog.stdlib.add_log_level,
         structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
+        _add_timestamp_if_missing,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
@@ -46,6 +65,16 @@ class LifecycleEvent(StrEnum):
     FAILED = "task.failed"
 
 
+class AuditOrderingError(RuntimeError):
+    """Raised when a caller attempts to emit a task event out of timestamp order."""
+
+
+EXPECTED_PHASE2_LIFECYCLE_EVENTS: tuple[LifecycleEvent, ...] = (
+    LifecycleEvent.STARTED,
+    LifecycleEvent.COMPLETED,
+)
+
+
 class AuditLogger:
     """Structured, append-only logger for all agent actions and system events.
 
@@ -64,6 +93,7 @@ class AuditLogger:
         # Protected by a lock so the class is correct under both asyncio
         # interleaving and threading (e.g. multi-threaded test runners).
         self._seq_counters: defaultdict[str, int] = defaultdict(int)
+        self._last_timestamps: dict[str, datetime] = {}
         self._seq_lock: Lock = Lock()
 
     def info(self, event: str, **kwargs: object) -> None:
@@ -102,6 +132,81 @@ class AuditLogger:
             span.set_attribute("action", action)
             self._log.info(event, agent_id=agent_id, action=action, **kwargs)
 
+    def _utcnow(self) -> datetime:
+        """Return the current UTC timestamp.
+
+        Tests patch this method to simulate clock skew deterministically.
+        """
+        return datetime.now(UTC)
+
+    @staticmethod
+    def _normalize_timestamp(value: datetime) -> datetime:
+        """Return a timezone-aware UTC datetime for ordering comparisons."""
+        return value.astimezone(UTC) if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+    def _reserve_task_event_metadata(
+        self,
+        task_id: str,
+        *,
+        timestamp_override: datetime | None = None,
+    ) -> tuple[int, str, dict[str, object] | None]:
+        """Reserve sequence/timestamp metadata for a task-scoped audit event.
+
+        When the wall clock moves backward relative to the previously emitted
+        event for the same task, the logger clamps the emitted timestamp to the
+        last known timestamp and returns metadata for an ``audit.clock_skew_warning``
+        event. Explicit timestamp overrides are treated as authoritative and will
+        raise :class:`AuditOrderingError` instead of being silently rewritten.
+        """
+        candidate = self._normalize_timestamp(timestamp_override or self._utcnow())
+
+        with self._seq_lock:
+            previous = self._last_timestamps.get(task_id)
+            if timestamp_override is not None and previous is not None and candidate < previous:
+                raise AuditOrderingError(
+                    "Cannot emit audit event with timestamp earlier than the previous "
+                    f"event for task_id={task_id!r}"
+                )
+
+            warning_payload: dict[str, object] | None = None
+            effective = candidate
+            if timestamp_override is None and previous is not None and candidate < previous:
+                warning_sequence_number = self._seq_counters[task_id]
+                self._seq_counters[task_id] += 1
+                effective = previous
+                warning_payload = {
+                    "sequence_number": warning_sequence_number,
+                    "timestamp": _format_utc_timestamp(effective),
+                    "previous_timestamp": _format_utc_timestamp(previous),
+                    "attempted_timestamp": _format_utc_timestamp(candidate),
+                    "adjusted_timestamp": _format_utc_timestamp(effective),
+                    "skew_ms": int((previous - candidate).total_seconds() * 1000),
+                }
+
+            sequence_number = self._seq_counters[task_id]
+            self._seq_counters[task_id] += 1
+            self._last_timestamps[task_id] = effective
+            return sequence_number, _format_utc_timestamp(effective), warning_payload
+
+    def _emit_clock_skew_warning(
+        self,
+        *,
+        task_id: str,
+        agent_type: str,
+        stage: str,
+        traceparent: str,
+        warning_payload: dict[str, object],
+    ) -> None:
+        """Emit a task-scoped warning when the wall clock moves backward."""
+        self.warning(
+            "audit.clock_skew_warning",
+            task_id=task_id,
+            agent_type=agent_type,
+            stage=stage,
+            traceparent=traceparent,
+            **warning_payload,
+        )
+
     def stage_event(
         self,
         event: str,
@@ -110,6 +215,7 @@ class AuditLogger:
         stage: str,
         task_id: str,
         agent_type: str,
+        timestamp_override: datetime | None = None,
         **kwargs: object,
     ) -> None:
         """Emit a structured audit event for a pipeline stage outcome (A1-2).
@@ -137,42 +243,85 @@ class AuditLogger:
         subsequent event increments by 1.  This field enables gap and
         duplicate detection in audit trail verification (A1-3).
         """
-        with self._seq_lock:
-            sequence_number = self._seq_counters[task_id]
-            self._seq_counters[task_id] += 1
-
         traceparent = self._current_traceparent()
+        sequence_number, timestamp, warning_payload = self._reserve_task_event_metadata(
+            task_id,
+            timestamp_override=timestamp_override,
+        )
+        if warning_payload is not None:
+            self._emit_clock_skew_warning(
+                task_id=task_id,
+                agent_type=agent_type,
+                stage=stage,
+                traceparent=traceparent,
+                warning_payload=warning_payload,
+            )
+
+        payload = {
+            "outcome": outcome,
+            "stage": stage,
+            "task_id": task_id,
+            "agent_type": agent_type,
+            "sequence_number": sequence_number,
+            "traceparent": traceparent,
+            "timestamp": timestamp,
+            **kwargs,
+        }
 
         if outcome == "error":
-            self.error(
-                event,
-                outcome=outcome,
-                stage=stage,
-                task_id=task_id,
-                agent_type=agent_type,
-                sequence_number=sequence_number,
-                traceparent=traceparent,
-                **kwargs,
-            )
+            self.error(event, **payload)
         elif outcome == "deny":
-            self.warning(
-                event,
-                outcome=outcome,
-                stage=stage,
-                task_id=task_id,
-                agent_type=agent_type,
-                sequence_number=sequence_number,
-                traceparent=traceparent,
-                **kwargs,
-            )
+            self.warning(event, **payload)
         else:
-            self.info(
-                event,
-                outcome=outcome,
-                stage=stage,
+            self.info(event, **payload)
+
+    def lifecycle_event(
+        self,
+        event: str,
+        *,
+        event_type: LifecycleEvent | str,
+        task_id: str,
+        agent_type: str,
+        session_id: str | None,
+        workflow_status: str,
+        stage: str = "workflow-lifecycle",
+        timestamp_override: datetime | None = None,
+        **kwargs: object,
+    ) -> None:
+        """Emit a structured lifecycle event with mandatory Phase 2 metadata."""
+        traceparent = self._current_traceparent()
+        sequence_number, timestamp, warning_payload = self._reserve_task_event_metadata(
+            task_id,
+            timestamp_override=timestamp_override,
+        )
+        if warning_payload is not None:
+            self._emit_clock_skew_warning(
                 task_id=task_id,
                 agent_type=agent_type,
-                sequence_number=sequence_number,
+                stage=stage,
                 traceparent=traceparent,
-                **kwargs,
+                warning_payload=warning_payload,
             )
+
+        event_type_value = (
+            event_type.value if isinstance(event_type, LifecycleEvent) else event_type
+        )
+        payload = {
+            "event_type": event_type_value,
+            "stage": stage,
+            "task_id": task_id,
+            "agent_type": agent_type,
+            "session_id": session_id or "",
+            "workflow_status": workflow_status,
+            "sequence_number": sequence_number,
+            "traceparent": traceparent,
+            "timestamp": timestamp,
+            **kwargs,
+        }
+
+        if event_type_value == LifecycleEvent.FAILED.value:
+            self.error(event, **payload)
+        elif event_type_value == LifecycleEvent.DENIED.value:
+            self.warning(event, **payload)
+        else:
+            self.info(event, **payload)

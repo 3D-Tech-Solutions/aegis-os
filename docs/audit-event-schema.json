@@ -117,6 +117,26 @@
             "minimum": 0,
             "description": "Monotonically increasing sequence number within a task run — used for gap and duplicate detection."
         },
+        "previous_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp of the previous emitted event for the same task when audit ordering logic detects backward clock drift."
+        },
+        "attempted_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Original wall-clock timestamp observed before the logger clamped a backward-skewed task event."
+        },
+        "adjusted_timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp ultimately emitted after audit ordering logic adjusted a backward-skewed task event."
+        },
+        "skew_ms": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Backward wall-clock skew detected for a task-scoped event, expressed in milliseconds."
+        },
         "stage": {
             "type": "string",
             "description": "Named pipeline stage at which this event was emitted (e.g. 'pre-pii-scrub', 'policy-eval')."

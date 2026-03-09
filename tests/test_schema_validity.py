@@ -247,6 +247,52 @@ _REAL_EVENTS: list[tuple[str, dict[str, Any]]] = [
             "requester_id": "user-005",
         },
     ),
+    (
+        "info",
+        {
+            "event": "token.sender_constrained_issued",
+            "task_id": "66666666-6666-6666-6666-666666666667",
+            "jti": "jti-unique-002",
+            "agent_type": "general",
+            "requester_id": "user-005",
+            "stage": "jit-token-issue",
+        },
+    ),
+    (
+        "info",
+        {
+            "event": "dpop.proof.validated",
+            "task_id": "66666666-6666-6666-6666-666666666668",
+            "jti": "jti-unique-003",
+            "agent_type": "general",
+            "stage": "llm-invoke",
+            "model": "gpt-4o-mini",
+        },
+    ),
+    (
+        "warning",
+        {
+            "event": "dpop.proof.replayed",
+            "task_id": "66666666-6666-6666-6666-666666666669",
+            "agent_type": "general",
+            "stage": "llm-invoke",
+            "error_message": "DPoP proof jti='proof-123' has already been used",
+        },
+    ),
+    (
+        "warning",
+        {
+            "event": "audit.clock_skew_warning",
+            "task_id": "66666666-6666-6666-6666-666666666670",
+            "agent_type": "general",
+            "stage": "llm-invoke",
+            "sequence_number": 7,
+            "previous_timestamp": "2026-03-09T12:00:02.000000Z",
+            "attempted_timestamp": "2026-03-09T12:00:01.500000Z",
+            "adjusted_timestamp": "2026-03-09T12:00:02.000000Z",
+            "skew_ms": 500,
+        },
+    ),
     # --- budget ---
     (
         "info",
@@ -350,7 +396,7 @@ _REAL_EVENTS: list[tuple[str, dict[str, Any]]] = [
     ),
 ]
 
-assert len(_REAL_EVENTS) == 20, f"Expected exactly 20 real events, got {len(_REAL_EVENTS)}"
+assert len(_REAL_EVENTS) == 24, f"Expected exactly 24 real events, got {len(_REAL_EVENTS)}"
 
 
 class TestConformance:
@@ -358,22 +404,22 @@ class TestConformance:
 
     @pytest.fixture(scope="class")
     def captured_events(self) -> list[dict[str, Any]]:
-        """Fire all 20 events and return the parsed JSON dicts."""
+        """Fire all fixture events and return the parsed JSON dicts."""
         # Deep-copy the dicts so the pop() calls in _capture_audit_events
         # do not mutate the module-level constant.
         pairs = [(method, copy.deepcopy(kwargs)) for method, kwargs in _REAL_EVENTS]
         events = _capture_audit_events(*pairs)
-        assert len(events) == 20, (
-            f"Expected 20 captured events from AuditLogger, got {len(events)}. "
+        assert len(events) == 24, (
+            f"Expected 24 captured events from AuditLogger, got {len(events)}. "
             "This indicates a logger reconfiguration bug in the test helper."
         )
         return events
 
     def test_all_20_events_captured(self, captured_events: list[dict[str, Any]]) -> None:
-        """Exactly 20 events must be emitted — no more, no fewer."""
-        assert len(captured_events) == 20
+        """Exactly 24 events must be emitted — no more, no fewer."""
+        assert len(captured_events) == 24
 
-    @pytest.mark.parametrize("idx", list(range(20)))
+    @pytest.mark.parametrize("idx", list(range(24)))
     def test_event_n_validates(
         self,
         idx: int,

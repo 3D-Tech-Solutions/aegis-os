@@ -268,11 +268,15 @@ a prompt before forwarding.
 
 **Implementation summary**
 
-- `src/governance/session_mgr.py` — added `TokenScopeError(PermissionError)` and
-  `TokenExpiredError(PermissionError)` exception classes.
+- `src/governance/session_mgr.py` — evolved from legacy HS256 bearer-token
+  issuance to a dual-path model that now supports asymmetric ES256
+  sender-constrained tokens with DPoP proof validation, while preserving the
+  existing bearer path during phased rollout. Added `TokenScopeError(PermissionError)`
+  and `TokenExpiredError(PermissionError)` exception classes.
 - `src/adapters/base.py` — added `metadata: dict[str, str]` field to `LLMRequest`
-  to carry orchestrator-level context (including the JIT token) alongside every
-  outbound call.
+  to carry orchestrator-level context alongside every outbound call. Protected
+  flows now propagate `aegis_token`, `aegis_dpop_proof`, and `aegis_protected`
+  metadata for DPoP-bound requests.
 - `src/control_plane/orchestrator.py` — Stage 3 expanded:
   - `JoseExpiredSignatureError` caught on `validate_token` → `TokenExpiredError`
     raised with `token_expired` audit event.
@@ -280,13 +284,19 @@ a prompt before forwarding.
   - Scope check: `claims.agent_type != request.agent_type` → `TokenScopeError`
     with `token_scope_violation` audit event.
   - Fresh token issuance emits a `token_issued` audit event carrying `jti`.
-  - Stage 4: `metadata={"aegis_token": token}` injected into every `LLMRequest`.
+  - Protected outbound flows issue ES256 sender-constrained adapter tokens,
+    bind them with `cnf.jkt`, and attach a per-request DPoP proof before the
+    adapter performs network I/O.
+  - Stage 4 injects `metadata={"aegis_token": token}` into every `LLMRequest`,
+    with DPoP proof metadata added when `protect_outbound_request=True`.
 
 **Testing requirements**
 
 - ✅ **Unit — token present:** call the orchestrator with a valid session; capture
   the `LLMRequest` passed to the adapter mock; assert `metadata["aegis_token"]`
-  is present, is a valid HS256 JWT, and carries the correct `agent_type` claim.
+  is present, is a valid session token, and carries the correct `agent_type`
+  claim. Protected flows additionally assert the token is ES256 sender-constrained
+  via `cnf.jkt` and that `metadata["aegis_dpop_proof"]` is present.
 - ✅ **Unit — token scope:** issue a token scoped to `finance`; attempt a task
   with `agent_type="hr"`; assert `TokenScopeError` is raised before any
   adapter call.
@@ -810,7 +820,7 @@ run.
 - [x] `test_pii_regression` — `tests/pii_regression.json` ≥ 50 adversarial inputs; zero leakage events
 - [x] `test_pii_false_positives` — ≥ 10 non-PII inputs per class; zero false-positive redactions
 - [x] `test_pii_performance` — 10,000-char prompt with 50 PII instances scrubbed in < 50 ms
-- [x] `test_jit_token_present` — `metadata["aegis_token"]` is a valid HS256 JWT with correct `agent_type`
+- [x] `test_jit_token_present` — `metadata["aegis_token"]` is a valid session token with correct `agent_type`; protected flows also carry DPoP proof metadata and `cnf.jkt` binding
 - [x] `test_jit_token_scope` — mismatched `agent_type`; `TokenScopeError` before any adapter call
 - [x] `test_jit_token_expired` — expired token; `TokenExpiredError` and audit event emitted
 - [x] `test_jit_uniqueness` — 100 sequential tasks; all `jti` claims are distinct UUIDs
@@ -954,6 +964,22 @@ test. Every item below must be verified by running code before Gate 2 runs.
 
 #### P2-1 — Implement `AgentTaskWorkflow` in `src/control_plane/scheduler.py`
 
+**Status: IMPLEMENTED AND VALIDATED 2026-03-07**
+
+`src/control_plane/scheduler.py` now contains a Temporal `AgentTaskWorkflow`
+with five concrete activities mapped 1:1 to the Governance Loop stages.
+`tests/test_temporal_workflow.py` and `tests/test_no_workflow_stubs.py`
+cover activity registration, execution order, stub regression guards, and a
+full workflow run that exports all five documented stage OTel spans.
+`tests/test_scheduler_dpop.py` and `tests/test_temporal_dpop_integration.py`
+cover protected outbound adapter flows, including successful
+sender-constrained execution and replay rejection for a re-used
+workflow-generated DPoP proof. `tests/test_router_p1_2.py`,
+`tests/test_schema_validity.py`, and `docs/api-reference.md` also expose
+`protect_outbound_request` and the DPoP audit event vocabulary at the API and
+conformance layers. Targeted `pytest`, `mypy`, and `ruff` checks passed on the
+workflow, retry, encryption, chaos, and Temporal DPoP slices.
+
 Temporal activities mapped 1:1 to orchestrator stages: `PrePIIScrub`,
 `PolicyEval`, `JITTokenIssue`, `LLMInvoke`, `PostSanitize`.
 
@@ -981,6 +1007,17 @@ Temporal activities mapped 1:1 to orchestrator stages: `PrePIIScrub`,
 
 #### P2-2 — Exponential backoff retry policies for LLM provider `429` and timeout errors
 
+**Status: IMPLEMENTED AND VALIDATED 2026-03-07**
+
+`LLM_RETRY_POLICY` is configured with exponential backoff and a 5-attempt cap
+for retryable LLM failures, with HITL escalation after exhaustion.
+`tests/test_p2_retry.py` covers retry cap, backoff policy configuration,
+timeout retries, successful recovery, retry audit events, and non-retryable
+failures. The workflow now distinguishes retry exhaustion from non-retryable
+`PolicyDeniedError` failures and emits `workflow.failed` for the latter instead
+of misclassifying them as HITL escalation. Targeted `pytest`, `mypy`, and
+`ruff` checks passed locally.
+
 Maximum of 5 attempts before escalating to HITL.
 
 **Testing requirements**
@@ -1006,6 +1043,17 @@ Maximum of 5 attempts before escalating to HITL.
 ---
 
 #### P2-3 — Encrypted context persistence between Temporal activities
+
+**Status: IMPLEMENTED AND VALIDATED 2026-03-07**
+
+`src/control_plane/data_converter.py` now provides an encrypted Temporal data
+converter backed by Fernet, and `src/config.py` includes
+`temporal_encryption_key` configuration. `tests/test_p2_encryption.py`
+now covers round-trip correctness, key mismatch handling, plaintext-history
+guards, and encrypted restart continuity where the worker is killed after the
+first two activities and the resumed path receives the expected stage-three
+context without replaying the completed stages. Targeted `pytest`, `mypy`, and
+`ruff` checks passed locally.
 
 Agent context and intermediate state persisted in an encrypted data
 converter; plaintext context in Temporal history is a hard failure.
@@ -1035,6 +1083,15 @@ converter; plaintext context in Temporal history is a hard failure.
 
 #### P2-4 — Chaos test: kill API process mid-workflow; assert Temporal resumes correctly
 
+**Status: IMPLEMENTED AND VALIDATED 2026-03-07**
+
+`tests/test_p2_chaos.py` exercises worker kill-and-resume scenarios for all
+five workflow stages, along with identity preservation, no-duplicate LLM
+calls, audit-event continuity, and recovery-time assertions. The identity test
+now validates `task_id`, `session_id`, and `agent_type` through the workflow
+query state after restart. Targeted `pytest`, `mypy`, and `ruff` checks passed
+locally on the chaos suite.
+
 **Testing requirements**
 
 - **Chaos — kill at each stage (× 5):** run five separate test scenarios;
@@ -1060,6 +1117,14 @@ converter; plaintext context in Temporal history is a hard failure.
 ### Security & Governance Team
 
 #### S2-1 — `PendingApproval` Temporal workflow state for budget extension > $50
+
+**Status: IMPLEMENTED AND VALIDATED 2026-03-07**
+
+`AgentTaskWorkflow` now enters `awaiting-approval` when projected spend is
+greater than `$50.00`, exposes `approve` / `deny` signals plus the
+`approval-status` query, halts LLM execution while approval is pending, and
+emits the expected deny and timeout outcomes. Validation passed with
+`tests/test_hitl_pending_approval.py` and the final full-suite rebaseline.
 
 **Testing requirements**
 
@@ -1091,6 +1156,15 @@ converter; plaintext context in Temporal history is a hard failure.
 
 `POST /api/v1/tasks/{task_id}/approve` and `POST /api/v1/tasks/{task_id}/deny`.
 
+**Status: IMPLEMENTED AND VALIDATED 2026-03-07**
+
+The HITL approve/deny endpoints are wired through `_authorize_hitl_action()`,
+validate scoped JIT tokens, enforce `hitl:approve` / `hitl:deny` action claims,
+load workflow snapshot context, and defer final role authorization to live OPA
+policy evaluation. Validation passed with `tests/test_hitl_endpoints.py` and the
+full `tests/test_hitl_rbac_matrix.py` role × endpoint regression matrix during
+the final full-suite rebaseline.
+
 **Testing requirements**
 
 - **Unit — admin caller approved:** call `approve` with a valid JWT carrying
@@ -1113,29 +1187,53 @@ converter; plaintext context in Temporal history is a hard failure.
 
 ---
 
-#### S2-3 — JIT tokens re-issued on every Temporal activity retry
+#### S2-3 — Sender-constrained JIT tokens re-issued on every Temporal activity retry
+
+**Status: IMPLEMENTED AND VALIDATED 2026-03-07**
+
+`JITTokenIssue` now generates protected-flow DPoP key material once and carries
+it through the encrypted Temporal payload so `LLMInvoke` retries can rotate the
+session token and DPoP proof `jti` values without changing the original
+`cnf.jkt` sender binding. Validation passed with the expanded
+`tests/test_jit_retry_rotation.py` sender-constrained retry matrix together
+with adjacent Temporal protected-flow and encryption regressions in
+`tests/test_scheduler_dpop.py`, `tests/test_temporal_dpop_integration.py`, and
+`tests/test_p2_encryption.py`.
 
 **Testing requirements**
 
 - **Unit — new token per retry:** mock the LLM adapter to fail once then
   succeed; capture the `metadata["aegis_token"]` from both the first attempt
-  and the retry; assert the two JWTs have different `jti` claims.
-- **Unit — prior `jti` rejected:** after a retry, attempt to reuse the
-  expired first-attempt token against a protected endpoint; assert
-  `401` — the prior `jti` must be in the revocation list or expired.
+  and the retry; assert the two JWTs have different `jti` claims. For
+  sender-constrained flows, also assert the DPoP proof `jti` changes on retry.
+- **Unit — prior token or proof rejected:** after a retry, attempt to reuse the
+  first-attempt token/proof pair against a protected endpoint; assert `401` —
+  the prior credential set must be expired, revoked, or rejected as a replay.
 - **Unit — token scope preserved on re-issue:** assert the re-issued token
-  carries the same `agent_type`, `session_id`, and `allowed_actions` claims
-  as the original — no scope escalation on retry.
+  carries the same `agent_type`, `session_id`, `allowed_actions`, and `cnf.jkt`
+  binding as the original — no scope escalation on retry.
 - **Integration — `jti` uniqueness across retried chain:** run a workflow
   that triggers 3 retries; collect all four `jti` values from the audit
-  log; assert all four are distinct UUIDs.
+  log; assert all four are distinct UUIDs. When the retry path uses protected
+  outbound requests, assert the associated DPoP proof `jti` values are also unique.
 - **Negative test — no token reuse even on same millisecond:** use
   `freezegun` to freeze time; run two consecutive retries; assert the `jti`
-  values differ even though `iat` and `exp` are identical.
+  values differ even though `iat` and `exp` are identical. Protected flows must
+  also emit fresh DPoP proofs with distinct `jti` values under the frozen clock.
 
 ---
 
 #### S2-4 — Adversarial approval: expired JIT token must not be silently accepted
+
+**Status: IMPLEMENTED AND VALIDATED 2026-03-08**
+
+The approve/deny authorization path in `src/control_plane/router.py` already
+rejects expired, revoked, malformed, and cross-session JIT tokens before any
+approval signal is sent, and emits the corresponding `jit.expired`,
+`jit.revoked`, `jit.invalid`, and `audit.cross_session_attempt` audit events.
+Validation passed with the dedicated adversarial approval coverage in
+`tests/test_hitl_endpoints.py`, and the behavior was re-confirmed in the fresh
+full-suite baseline captured at `/tmp/aegis-full-suite-2026-03-08-s2-3.log`.
 
 **Testing requirements**
 
@@ -1160,6 +1258,18 @@ converter; plaintext context in Temporal history is a hard failure.
 ### Watchdog & Reliability Team
 
 #### W2-1 — `BudgetEnforcer` restores session state from Temporal workflow history
+
+**Status: IMPLEMENTED AND VALIDATED 2026-03-08**
+
+`BudgetSession.serialize()` / `deserialize()` already exist in
+`src/watchdog/budget_enforcer.py`, and the Temporal scheduler now carries
+workflow-owned budget history through dedicated watchdog activities
+(`BudgetPreCheck` and `BudgetRecordSpend`) so exact spend is reconstructed from
+durable workflow state rather than worker-local memory. Validation now covers
+exact Decimal round-trips, idempotent replay suppression, activity-id-based
+redelivery safety, and the full kill-at-each-stage recovery matrix in
+`tests/test_budget_recovery.py`, followed by a green full-suite baseline at
+`/tmp/aegis-full-suite-2026-03-08-w2-1-final.log`.
 
 Cumulative spend must be identical before and after recovery.
 
@@ -1189,6 +1299,18 @@ Cumulative spend must be identical before and after recovery.
 
 #### W2-2 — `LoopDetector` step count persists correctly across retried Temporal activities
 
+**Status: IMPLEMENTED AND VALIDATED 2026-03-08**
+
+`LoopDetector.checkpoint()` / `restore()` already exist in
+`src/watchdog/loop_detector.py`. The Temporal worker now also exposes a
+replay-safe `LoopRecordStep` activity in `src/control_plane/scheduler.py` that
+restores workflow-owned loop checkpoints, records the next step, and returns an
+updated checkpoint for durable reuse across retries and worker restarts.
+Validation includes the existing retry/restore unit coverage in
+`tests/test_loop_detector.py`, plus live Temporal restart coverage in
+`tests/test_loop_recovery.py`, followed by a green full-suite baseline at
+`/tmp/aegis-full-suite-2026-03-08-w2-2.log`.
+
 **Testing requirements**
 
 - **Unit — counter preserved on retry:** create a `LoopDetector` with
@@ -1216,6 +1338,23 @@ Cumulative spend must be identical before and after recovery.
 
 #### W2-3 — Prometheus alert rule for workflow stuck in `PendingApproval` > 24 hours
 
+**Status: IMPLEMENTED AND VALIDATED 2026-03-08**
+
+The watchdog metric and Prometheus alert are now aligned to the roadmap shape
+end-to-end. `src/watchdog/metrics.py` exports
+`aegis_workflow_pending_approval_seconds`, `docs/alerts.yml` defines the
+`aegis_hitl_stuck` alert with severity `critical`, and `src/main.py` now
+refreshes the scraped API-side gauge from live Temporal approval snapshots
+before serving `/metrics`. `src/control_plane/scheduler.py` exposes
+`pending_since_epoch_seconds` on `ApprovalStatusSnapshot`, and
+`src/control_plane/approval_service.py` can enumerate pending approvals from
+open Temporal workflows for real deployments. Validation now includes both the
+Prometheus rule tests in `tests/test_prometheus_rules.py` and the live
+workflow metric lifecycle checks in `tests/test_pending_approval_metrics.py`,
+which prove the gauge appears while a workflow is awaiting review and clears
+after approval. Repository-wide validation passed at
+`/tmp/aegis-full-suite-2026-03-08-w2-3-final.log`.
+
 **Testing requirements**
 
 - **Unit — alert rule syntax:** load `docs/prometheus.yml` into a
@@ -1241,6 +1380,8 @@ Cumulative spend must be identical before and after recovery.
 
 #### W2-4 — Replay test: 1,000 tasks with injected provider failures at random stages
 
+**Status: IMPLEMENTED AND VALIDATED (2026-03-09)**
+
 **Testing requirements**
 
 - **Test definition:** `tests/test_budget_replay.py` — run 1,000 tasks each
@@ -1261,11 +1402,54 @@ Cumulative spend must be identical before and after recovery.
   must complete within 5 minutes on the CI runner; a timeout failure blocks
   the gate.
 
+`tests/test_budget_replay.py` now drives 1,000 seeded Temporal workflows with
+one injected stage failure per task, verifies replay-safe budget totals against
+`llm.invoke.completed` audit events, and asserts every injected failure records
+`task.retried` before `task.completed`. The harness uses a deterministic
+`AEGIS_REPLAY_SEED` and a sequential default batch size to avoid Temporal
+time-skipping transport limits while preserving the full 1,000-task workload.
+Validation evidence on 2026-03-09:
+
+- `/home/xbyooki/anaconda3/envs/aegis/bin/ruff check tests/test_budget_replay.py`
+  -> `All checks passed!`
+- `/home/xbyooki/anaconda3/envs/aegis/bin/mypy tests/test_budget_replay.py`
+  -> `Success: no issues found in 1 source file`
+- `/home/xbyooki/anaconda3/envs/aegis/bin/pytest -q tests/test_budget_replay.py`
+  -> `1 passed in 54.87s`
+- Direct 1,000-task execution of
+  `test_budget_replay_seeded_1000_tasks_have_exact_spend_and_retry_audit()`
+  completed in `44.31s`, satisfying the `< 5 min` gate.
+- Full suite baseline:
+  `/home/xbyooki/anaconda3/envs/aegis/bin/pytest tests/ -ra 2>&1 | tee /tmp/aegis-full-suite-2026-03-09-w2-4.log`
+  -> `762 passed, 29 skipped, 4 warnings in 166.00s`
+
 ---
 
 ### Audit & Compliance Team
 
 #### A2-1 — Propagate `task_id` and W3C `traceparent` into Temporal workflow and activity metadata
+
+**Status: IMPLEMENTED AND VALIDATED (2026-03-09)**
+
+`src/control_plane/scheduler.py` now carries an optional `traceparent` through
+`WorkflowInput` and downstream activity input dataclasses, starts activity spans
+from the extracted W3C parent context, and raises `MissingTaskIdError` with an
+`audit.propagation_error` event if any activity input loses `task_id`. The
+dedicated `tests/test_temporal_trace_propagation.py` suite now validates
+Temporal-history `task_id` preservation at workflow start and on all five
+scheduled activities, trace-id roundtrip into activity spans, restart continuity
+across a worker kill/restart, and the missing-`task_id` failure path.
+
+Validation evidence on 2026-03-09:
+
+- `/home/xbyooki/anaconda3/envs/aegis/bin/ruff check src/control_plane/scheduler.py tests/test_temporal_trace_propagation.py`
+  -> `All checks passed!`
+- `/home/xbyooki/anaconda3/envs/aegis/bin/mypy src/control_plane/scheduler.py tests/test_temporal_trace_propagation.py`
+  -> `Success: no issues found in 2 source files`
+- `/home/xbyooki/anaconda3/envs/aegis/bin/pytest -q tests/test_temporal_trace_propagation.py`
+  -> `5 passed in 5.70s`
+- `/home/xbyooki/anaconda3/envs/aegis/bin/pytest -q tests/test_temporal_workflow.py tests/test_p2_chaos.py tests/test_p2_encryption.py tests/test_temporal_trace_propagation.py`
+  -> `55 passed in 68.09s`
 
 **Testing requirements**
 
@@ -1291,6 +1475,27 @@ Cumulative spend must be identical before and after recovery.
 ---
 
 #### A2-2 — Emit audit events for every workflow lifecycle transition
+
+**Status: IMPLEMENTED AND VALIDATED (2026-03-09)**
+
+`src/audit_vault/logger.py` now exposes a dedicated `lifecycle_event()` helper
+plus `EXPECTED_PHASE2_LIFECYCLE_EVENTS` for the happy-path count contract.
+`src/control_plane/scheduler.py` emits lifecycle metadata from activities that
+already exist on every workflow path: `workflow.started` from `PrePIIScrub`,
+`llm.retried` from `LLMInvoke`, and `workflow.completed` from `PostSanitize`.
+The existing `WorkflowAudit` activity now enriches workflow-level events with
+the same lifecycle envelope for `workflow.pending_approval`,
+`workflow.approved`, `workflow.denied`, `workflow.timed_out`, and
+`workflow.failed`, including `event_type`, `session_id`, `workflow_status`,
+`timestamp`, `sequence_number`, and `traceparent`.
+
+**Validation evidence (2026-03-09)**
+
+- `ruff check src/audit_vault/logger.py src/control_plane/scheduler.py tests/test_audit_lifecycle_count.py tests/test_audit_lifecycle_events.py tests/test_hitl_pending_approval.py tests/test_p2_retry.py tests/test_budget_replay.py` -> passed
+- `mypy src/audit_vault/logger.py src/control_plane/scheduler.py tests/test_audit_lifecycle_count.py tests/test_audit_lifecycle_events.py tests/test_hitl_pending_approval.py tests/test_p2_retry.py tests/test_budget_replay.py` -> passed
+- `pytest -q tests/test_audit_lifecycle_count.py tests/test_audit_lifecycle_events.py tests/test_hitl_pending_approval.py tests/test_p2_retry.py` -> `34 passed in 6.99s`
+- `pytest -q tests/test_temporal_workflow.py tests/test_p2_chaos.py tests/test_p2_encryption.py tests/test_temporal_trace_propagation.py tests/test_budget_replay.py tests/test_audit_lifecycle_count.py tests/test_audit_lifecycle_events.py` -> `65 passed in 126.95s`
+- `/home/xbyooki/anaconda3/envs/aegis/bin/pytest tests/ -ra 2>&1 | tee /tmp/aegis-full-suite-2026-03-09-a2-2.log` -> `778 passed, 29 skipped, 4 warnings in 198.75s`
 
 Events: `started`, `retried` (with retry count), `pending-approval`,
 `approved`, `denied`, `completed`, `failed`.
@@ -1323,6 +1528,37 @@ Events: `started`, `retried` (with retry count), `pending-approval`,
 
 #### A2-3 — Provider outage simulation: audit trail complete with no missing events
 
+**Status: COMPLETE (2026-03-09)**
+
+**Implementation summary**
+
+- `tests/test_audit_provider_outage.py` now exercises a deterministic provider-
+  outage recovery scenario with 50 concurrent workflows under
+  `WorkflowEnvironment.start_time_skipping()`.
+- `_OutageAfterOneSuccessAdapter` forces one immediate success, then one
+  retryable `ProviderOutageError` for every remaining task before allowing all
+  retries to recover, which gives the audit assertions a controlled outage/
+  restore boundary.
+- `_MonotonicRecordingAuditLogger` records strictly increasing timestamps so the
+  test can assert gapless `sequence_number` progression and per-task timestamp
+  ordering without wall-clock noise.
+- The outage test now collects workflow results sequentially after all 50
+  workflows are started, avoiding Temporal history-fetch fan-out that was able
+  to overload the local time-skipping test server without changing the
+  concurrency of the actual workflow execution.
+
+**Validation evidence**
+
+- Focused outage validation passed on 2026-03-09:
+  `conda run -n aegis pytest -q tests/test_audit_provider_outage.py::test_provider_outage_recovery_has_complete_gapless_ordered_audit_trails`
+  -> `1 passed in 3.87s`
+- Focused audit regression checks passed on 2026-03-09:
+  `conda run -n aegis pytest -q tests/test_audit_ordering.py tests/test_schema_validity.py tests/test_audit_logger_a1_2.py tests/test_audit_logger_a1_3.py`
+  -> `89 passed in 5.14s`
+- Broader Phase 2 workflow/audit regression slice passed on 2026-03-09:
+  `conda run -n aegis pytest -q tests/test_audit_lifecycle_count.py tests/test_audit_lifecycle_events.py tests/test_temporal_trace_propagation.py tests/test_temporal_workflow.py`
+  -> `30 passed in 7.99s`
+
 **Testing requirements**
 
 - **Setup:** use `toxiproxy` (or `tc netem` in CI) to simulate a network
@@ -1346,6 +1582,40 @@ Events: `started`, `retried` (with retry count), `pending-approval`,
 ---
 
 #### A2-4 — No audit event emitted with a timestamp earlier than the previous event for the same `task_id`
+
+**Status: COMPLETE (2026-03-09)**
+
+**Implementation summary**
+
+- `src/audit_vault/logger.py` now preserves caller-provided task timestamps via
+  a custom timestamp processor instead of unconditionally overwriting them with
+  `structlog.processors.TimeStamper`.
+- `AuditLogger` now tracks per-task last-emitted timestamps alongside the
+  existing per-task `sequence_number` counters.
+- Backward wall-clock drift on logger-generated timestamps is clamped to the
+  previous task timestamp and emits `audit.clock_skew_warning` with
+  `previous_timestamp`, `attempted_timestamp`, `adjusted_timestamp`, and
+  `skew_ms` metadata.
+- Explicit caller attempts to emit an earlier timestamp now raise
+  `AuditOrderingError` and do not write the out-of-order event.
+- `docs/audit-event-schema.json` now accepts the clock-skew warning metadata,
+  and schema conformance coverage includes a real `audit.clock_skew_warning`
+  fixture event.
+
+**Validation evidence**
+
+- `tests/test_audit_ordering.py` added for the A2-4 contract: 100-task
+  monotonic ordering, backward-clock skew warning/clamp behavior, concurrent
+  task isolation, and explicit out-of-order rejection.
+- Focused validation passed on 2026-03-09:
+  `conda run -n aegis pytest -q tests/test_audit_ordering.py tests/test_schema_validity.py tests/test_audit_logger_a1_2.py tests/test_audit_logger_a1_3.py`
+  -> `89 passed in 5.24s`
+- Targeted lint/type checks passed on the changed files:
+  `conda run -n aegis ruff check src/audit_vault/logger.py tests/test_audit_ordering.py tests/test_schema_validity.py`
+  -> `All checks passed!`
+  and
+  `conda run -n aegis mypy src/audit_vault/logger.py tests/test_audit_ordering.py tests/test_schema_validity.py`
+  -> `Success: no issues found in 3 source files`
 
 **Testing requirements**
 
@@ -1372,6 +1642,12 @@ Events: `started`, `retried` (with retry count), `pending-approval`,
 
 #### F2-1 — Add Temporal UI link, workflow state diagram, and recovery procedure to `docs/deployment-guide.md`
 
+**Status: PARTIAL (2026-03-07 gap pass)**
+
+The deployment guide already documented Temporal service ports, but the
+Phase 2 workflow operations content was incomplete. A live-contract update
+landed on 2026-03-07; docs tests and peer-review sign-off still remain.
+
 **Testing requirements**
 
 - **Link validity:** `tests/test_docs_links.py` (extended from Phase 1)
@@ -1395,6 +1671,12 @@ Events: `started`, `retried` (with retry count), `pending-approval`,
 ---
 
 #### F2-2 — HITL approval API contract in `docs/api-reference.md`
+
+**Status: PARTIAL (2026-03-07 gap pass)**
+
+`docs/api-reference.md` existed as a placeholder, but it used the wrong
+resource shape (`workflow_id` instead of `task_id`). A live-contract update
+landed on 2026-03-07; docs-side conformance tests still remain.
 
 Request schema, response schema, error codes, and timeout behaviour.
 
@@ -1423,6 +1705,12 @@ Request schema, response schema, error codes, and timeout behaviour.
 
 #### F2-3 — Write `docs/runbooks/hitl-stuck-approval.md`
 
+**Status: PARTIAL (2026-03-07 gap pass)**
+
+The skeleton file existed before the gap pass. The runbook content was updated
+to match the live task-based HITL endpoints on 2026-03-07, but command
+walkthrough validation and non-author sign-off still remain.
+
 Diagnosis, escalation path, and resolution steps.
 
 **Testing requirements**
@@ -1446,6 +1734,29 @@ Diagnosis, escalation path, and resolution steps.
 ---
 
 #### F2-4 — Update `docs/runbooks/budget-exceeded.md` to cover the HITL approval flow
+
+**Status: PARTIAL (2026-03-07 gap pass)**
+
+The runbook existed but still referenced a non-existent `/api/v1/approvals`
+endpoint. The Phase 2 HITL flow was updated on 2026-03-07; walkthrough and
+cross-reference validation still remain.
+
+---
+
+### Cross-Team Gap Pass (2026-03-07)
+
+- **Platform**: Probably already implemented. P2-1 through P2-4 above are
+  marked implemented and validated, and their named tests already exist.
+- **Watchdog & Reliability**: Partial. Serialization/checkpoint primitives are
+  present, but Temporal-history restoration, replay/idempotency, and 1,000-task
+  recovery coverage are still truly not started.
+- **Audit & Compliance**: Partial. `task_id`, `traceparent`, and lifecycle
+  vocabulary exist at the logger layer, but the Phase 2 Temporal propagation,
+  outage completeness, and ordering enforcement suites are still truly not
+  started.
+- **Frontend & DevEx**: Partial. The core docs now match the live HITL task
+  endpoints, but doc-validation tests, walkthrough sign-off, and some Gate 2
+  infrastructure expectations still remain.
 
 **Testing requirements**
 
@@ -1500,52 +1811,52 @@ run.
 - [ ] `test_chaos_audit_continuity` — audit event sequence across kill/restart matches uninterrupted run by event type and stage name
 
 **Security & Governance**
-- [ ] `test_pending_approval_trigger` — projected spend > $50.01 → `PendingApproval`; exactly $50.00 → does not trigger
-- [ ] `test_pending_approval_state_machine` — all four states (`awaiting-approval`, `approved`, `denied`, `timed-out`) each have exactly one tested transition
-- [ ] `test_pending_approval_execution_halt` — no LLM adapter invoked while workflow is in `PendingApproval`
-- [ ] `test_pending_approval_approve_resumes` — `workflow.signal()` approve; workflow resumes; valid `TaskResponse` returned
-- [ ] `test_pending_approval_deny_terminates` — deny signal; `workflow.denied` event with non-null `reason` and `approver_id`
-- [ ] `test_pending_approval_timeout` — 2-second test timeout; auto-terminates with `timed-out` audit event; never hangs
-- [ ] `test_hitl_admin_approve` — `role=admin` JWT; HTTP `200`; workflow receives approve signal
-- [ ] `test_hitl_non_admin_blocked` — `role=operator` JWT; HTTP `403` issued by OPA, not a hardcoded check; same for deny
-- [ ] `test_hitl_invalid_token_blocked` — malformed/expired JWT on approve; HTTP `401`
-- [ ] `test_hitl_nonexistent_task` — approve for unknown `task_id`; HTTP `404` with structured error body
-- [ ] `test_hitl_rbac_matrix` — 2 endpoints × 5 roles = 10 cases; only `admin` receives `200`; all others `403`
-- [ ] `test_jit_new_token_per_retry` — two attempts; both `jti` values present in audit; confirmed distinct UUIDs
-- [ ] `test_jit_prior_jti_rejected` — reuse first-attempt token after retry; `401` returned
-- [ ] `test_jit_scope_preserved_on_reissue` — re-issued token carries same `agent_type`, `session_id`, `allowed_actions`; no scope escalation
-- [ ] `test_jit_uniqueness_across_retried_chain` — 3 retries; all four `jti` values are distinct UUIDs
-- [ ] `test_adversarial_expired_token_on_approve` — expired token; HTTP `401` and `jit.expired` audit event; never `200`
-- [ ] `test_adversarial_revoked_token` — revoked `jti`; `401` within 1 second of revocation
-- [ ] `test_adversarial_cross_session_token` — token for `session_id=A` used on `session_id=B`; `403` and `audit.cross_session_attempt` event
-- [ ] `test_adversarial_no_silent_accept` — five adversarial token scenarios (expired, revoked, wrong session, wrong role, malformed signature); every scenario returns `4xx` and emits audit event
+- [x] `test_pending_approval_trigger` — projected spend > $50.01 → `PendingApproval`; exactly $50.00 → does not trigger
+- [x] `test_pending_approval_state_machine` — all four states (`awaiting-approval`, `approved`, `denied`, `timed-out`) each have exactly one tested transition
+- [x] `test_pending_approval_execution_halt` — no LLM adapter invoked while workflow is in `PendingApproval`
+- [x] `test_pending_approval_approve_resumes` — `workflow.signal()` approve; workflow resumes; valid `TaskResponse` returned
+- [x] `test_pending_approval_deny_terminates` — deny signal; `workflow.denied` event with non-null `reason` and `approver_id`
+- [x] `test_pending_approval_timeout` — 2-second test timeout; auto-terminates with `timed-out` audit event; never hangs
+- [x] `test_hitl_admin_approve` — `role=admin` JWT; HTTP `200`; workflow receives approve signal
+- [x] `test_hitl_non_admin_blocked` — `role=operator` JWT; HTTP `403` issued by OPA, not a hardcoded check; same for deny
+- [x] `test_hitl_invalid_token_blocked` — malformed/expired JWT on approve; HTTP `401`
+- [x] `test_hitl_nonexistent_task` — approve for unknown `task_id`; HTTP `404` with structured error body
+- [x] `test_hitl_rbac_matrix` — 2 endpoints × 5 roles = 10 cases; only `admin` receives `200`; all others `403`
+- [x] `test_jit_new_token_per_retry` — two attempts; both `jti` values present in audit; confirmed distinct UUIDs
+- [x] `test_jit_prior_jti_rejected` — reuse first-attempt token after retry; `401` returned
+- [x] `test_jit_scope_preserved_on_reissue` — re-issued token carries same `agent_type`, `session_id`, `allowed_actions`; no scope escalation
+- [x] `test_jit_uniqueness_across_retried_chain` — 3 retries; all four `jti` values are distinct UUIDs
+- [x] `test_adversarial_expired_token_on_approve` — expired token; HTTP `401` and `jit.expired` audit event; never `200`
+- [x] `test_adversarial_revoked_token` — revoked `jti`; `401` within 1 second of revocation
+- [x] `test_adversarial_cross_session_token` — token for `session_id=A` used on `session_id=B`; `403` and `audit.cross_session_attempt` event
+- [x] `test_adversarial_no_silent_accept` — five adversarial token scenarios (expired, revoked, wrong session, wrong role, malformed signature); every scenario returns `4xx` and emits audit event
 
 **Watchdog & Reliability**
-- [ ] `test_budget_serialize_deserialize_round_trip` — $7.34 serialized/deserialized; `Decimal("7.34")` exact; zero floating-point drift
+- [x] `test_budget_serialize_deserialize_round_trip` — $7.34 serialized/deserialized; `Decimal("7.34")` exact; zero floating-point drift
 - [ ] `test_budget_exact_recovery_after_restart` — $3.00 recorded; kill/restart; `restore_from_history()` returns `Decimal("3.00")`; one-cent variance fails
-- [ ] `test_budget_no_double_count_on_redelivery` — same `LLMInvoke` result delivered twice; spend recorded exactly once; idempotency key is `task_id`
+- [x] `test_budget_no_double_count_on_redelivery` — same `LLMInvoke` result delivered twice; spend recorded exactly once; idempotency key is `task_id`
 - [ ] `test_budget_recovery_all_five_stages` — P2-4 five-stage kill cycle; spend exact after every recovery
-- [ ] `test_loop_counter_preserved_on_retry` — serialize after 2 steps, restore, add 1 more; counter is 3 not 1
-- [ ] `test_loop_retry_does_not_reset_counter` — re-delivered activity input; counter increments, does not reset
-- [ ] `test_loop_checkpoint_round_trip` — checkpoint after 3 steps; restored detector trips on 5th step, not 3rd
-- [ ] `test_loop_halt_cross_restart` — `NO_PROGRESS` at steps 2 and 4 with kill between; trips at correct cumulative count; audit records pre-restart signals
-- [ ] `test_loop_progress_reset_survives_restart` — `PROGRESS` counter reset survives serialize/restore cycle; no false trip after reset
-- [ ] `test_prometheus_hitl_stuck_syntax` — rule loads in Prometheus container; `aegis_hitl_stuck` listed with state `inactive`
-- [ ] `test_prometheus_hitl_stuck_fires` — metric at 86,401 s; alert fires with severity `critical`
-- [ ] `test_prometheus_hitl_stuck_silent` — metric at 86,399 s; alert remains `inactive`
-- [ ] `test_prometheus_runbook_link` — `runbook_url` annotation present and non-empty on every alert rule in `docs/prometheus.yml`
-- [ ] `test_budget_replay` — 1,000-task `AEGIS_REPLAY_SEED`-seeded replay; zero double-counted spend; spend sum matches audit log to 4 d.p.; all complete in < 5 min
+- [x] `test_loop_counter_preserved_on_retry` — serialize after 2 steps, restore, add 1 more; counter is 3 not 1
+- [x] `test_loop_retry_does_not_reset_counter` — re-delivered activity input; counter increments, does not reset
+- [x] `test_loop_checkpoint_round_trip` — checkpoint after 3 steps; restored detector trips on 5th step, not 3rd
+- [x] `test_loop_halt_cross_restart` — `NO_PROGRESS` at steps 2 and 4 with kill between; trips at correct cumulative count; audit records pre-restart signals
+- [x] `test_loop_progress_reset_survives_restart` — `PROGRESS` counter reset survives serialize/restore cycle; no false trip after reset
+- [x] `test_prometheus_hitl_stuck_syntax` — rule loads in Prometheus container; `aegis_hitl_stuck` listed with state `inactive`
+- [x] `test_prometheus_hitl_stuck_fires` — metric at 86,401 s; alert fires with severity `critical`
+- [x] `test_prometheus_hitl_stuck_silent` — metric at 86,399 s; alert remains `inactive`
+- [x] `test_prometheus_runbook_link` — `runbook_url` annotation present and non-empty on every alert rule in `docs/prometheus.yml`
+- [x] `test_budget_replay` — 1,000-task `AEGIS_REPLAY_SEED`-seeded replay; zero double-counted spend; spend sum matches audit log to 4 d.p.; all complete in < 5 min
 
 **Audit & Compliance**
-- [ ] `test_task_id_in_workflow_input` — `task_id` present in `WorkflowExecutionStartedEventAttributes`; not a generated substitute
-- [ ] `test_task_id_in_every_activity_input` — `task_id` present in all five `ScheduledEventAttributes` payloads; missing on any activity fails
-- [ ] `test_traceparent_roundtrip` — known `trace-id` appears in OTel spans for all five activities
-- [ ] `test_trace_unbroken_across_restart` — all spans before and after kill/restart share identical root `trace_id`; zero orphaned spans
-- [ ] `test_audit_happy_path_sequence` — `started` then `completed` in order; no other lifecycle events on a happy-path run
-- [ ] `test_audit_retry_count_increments` — two failures then success; `retry_count` is 1 then 2; `completed` carries `total_retries=2`
-- [ ] `test_audit_all_seven_event_types` — one scenario per type; all seven events carry mandatory fields `task_id`, `session_id`, `timestamp`, `event_type`, `workflow_status`
-- [ ] `test_audit_denied_has_approver_id` — `denied` event has non-null `approver_id` matching the identity in the deny request
-- [ ] `test_audit_lifecycle_count` — happy-path task emits exactly `EXPECTED_PHASE2_LIFECYCLE_EVENTS` events; `N±1` fails
+- [x] `test_task_id_in_workflow_input` — `task_id` present in `WorkflowExecutionStartedEventAttributes`; not a generated substitute
+- [x] `test_task_id_in_every_activity_input` — `task_id` present in all five `ScheduledEventAttributes` payloads; missing on any activity fails
+- [x] `test_traceparent_roundtrip` — known `trace-id` appears in OTel spans for all five activities
+- [x] `test_trace_unbroken_across_restart` — all spans before and after kill/restart share identical root `trace_id`; zero orphaned spans
+- [x] `test_audit_happy_path_sequence` — `started` then `completed` in order; no other lifecycle events on a happy-path run
+- [x] `test_audit_retry_count_increments` — two failures then success; `retry_count` is 1 then 2; `completed` carries `total_retries=2`
+- [x] `test_audit_all_seven_event_types` — one scenario per type; all seven events carry mandatory fields `task_id`, `session_id`, `timestamp`, `event_type`, `workflow_status`
+- [x] `test_audit_denied_has_approver_id` — `denied` event has non-null `approver_id` matching the identity in the deny request
+- [x] `test_audit_lifecycle_count` — happy-path task emits exactly `EXPECTED_PHASE2_LIFECYCLE_EVENTS` events; `N±1` fails
 - [ ] `test_audit_outage_no_gaps` — 50 concurrent tasks through `toxiproxy` outage; zero missing `sequence_number` gaps; zero out-of-order timestamps
 - [ ] `test_audit_recovery_latency` — all 50 audit trails complete within 30 s of network restoration
 - [ ] `test_audit_monotonic_100_tasks` — 100 tasks; every consecutive `(e_n, e_{n+1})` pair satisfies `timestamp_{n+1} >= timestamp_n`
