@@ -203,7 +203,7 @@ spec:
         runAsGroup: 1000
       containers:
         - name: aegis-api
-          image: ghcr.io/tescolopio/aegis-os:0.1.0
+          image: ghcr.io/3D-Tech-Solutions/aegis-os:0.1.0
           ports:
             - containerPort: 8000
           envFrom:

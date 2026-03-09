@@ -383,7 +383,7 @@ All settings are loaded from environment variables prefixed with `AEGIS_` and ca
 **1. Clone the repository:**
 
 ```bash
-git clone https://github.com/tescolopio/aegis-os.git
+git clone https://github.com/3D-Tech-Solutions/aegis-os.git
 cd aegis-os
 ```
 
@@ -484,7 +484,7 @@ team-specific task breakdowns and detailed Go/No-Go gate criteria.
 
 ---
 
-Maintained by [@tescolopio](https://github.com/tescolopio)
+Maintained by [3D Tech Solutions](https://github.com/3D-Tech-Solutions)
 
 ---
 
