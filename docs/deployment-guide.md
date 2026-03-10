@@ -79,7 +79,7 @@ The `docker-compose.yml` is suitable for **local development and CI only**. It u
 
 ### Services
 
-The compose file starts nine services:
+The compose file starts eleven services:
 
 | Service | Port(s) | Purpose |
 |---|---|---|
@@ -90,6 +90,7 @@ The compose file starts nine services:
 | `temporal-ui` | `18080` | Temporal web UI |
 | `postgresql` | internal | Temporal persistence — not exposed to the host; Temporal connects via the internal network |
 | `opa` | `8181` | OPA policy engine — mounts `./policies` and auto-loads all `*.rego` files |
+| `toxiproxy` | `18474` → `8474`, `18666` → `18666` | Network fault injector used by outage and latency validation in CI and local fault-reproduction runs |
 | `prometheus` | `19090` | Prometheus metrics scraping |
 | `code-scalpel` | `18090` | Code Scalpel MCP SSE server — `http://localhost:18090/sse` |
 | `grafana` | `13000` | Grafana dashboards (default user: admin / admin) |
@@ -634,11 +635,43 @@ Phase 2 workflow and HITL validation in this repository currently depends on:
 - local Docker for the dev stack
 - the `aegis-worker` Temporal worker service in Docker Compose for runtime
   workflow execution outside tests
+- the `toxiproxy` Docker Compose service for reproducible network fault injection
+  during outage-latency validation
 - Prometheus loading `docs/alerts.yml` through `docs/prometheus.yml`
 
-`toxiproxy` (or an equivalent network fault injector) is still a remaining Gate 2
-infrastructure item. Do not mark the outage-recovery audit criteria complete
-until it is available in CI and documented here.
+`toxiproxy` is exposed at `http://localhost:18474` in the local/CI compose stack.
+Use its admin API to create TCP proxies in front of a dependency and then add
+or remove toxic conditions during an outage test.
+
+The default Gate 2 outage-latency harness reserves `localhost:18666` as the
+published proxy listener so host-run Temporal tests can route adapter traffic
+through the proxy while the upstream test server remains on the host.
+
+Example: create a proxy for a local provider running on `host.docker.internal:11434`
+and then inject downstream latency.
+
+```bash
+curl -sS -X POST http://localhost:18474/proxies \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "local-llama",
+    "listen": "0.0.0.0:18666",
+    "upstream": "host.docker.internal:11434"
+  }'
+
+curl -sS -X POST http://localhost:18474/proxies/local-llama/toxics \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "name": "provider-latency",
+    "type": "latency",
+    "stream": "downstream",
+    "attributes": {"latency": 30000, "jitter": 0}
+  }'
+```
+
+For Phase 2 outage-latency tests, point the worker's provider base URL at the
+proxy endpoint instead of the upstream service and remove the toxic when the
+recovery window starts.
 ```
 
 ---

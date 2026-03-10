@@ -31,6 +31,7 @@ from src.watchdog.budget_enforcer import (
     BudgetExceededError,
     BudgetHistoryEntry,
     BudgetSession,
+    BudgetSessionSnapshot,
 )
 
 
@@ -528,6 +529,63 @@ class TestBudgetSessionSerialization:
         restored.alerts.append("mutation")
 
         assert session.alerts == []
+
+    def test_create_session_accepts_decimal_limit_without_conversion_loss(
+        self, enforcer: BudgetEnforcer
+    ) -> None:
+        """A Decimal budget limit should take the explicit non-float branch unchanged."""
+        sid = uuid4()
+
+        session = enforcer.create_session(
+            sid,
+            agent_type="finance",
+            budget_limit_usd=Decimal("7.77"),
+        )
+
+        assert session.budget_limit_usd == Decimal("7.77")
+
+    def test_create_session_uses_settings_default_when_limit_omitted(
+        self, enforcer: BudgetEnforcer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Omitting the limit should use the configured settings default branch."""
+        sid = uuid4()
+        monkeypatch.setattr("src.watchdog.budget_enforcer.settings.budget_limit_usd", 12.5)
+
+        session = enforcer.create_session(sid, agent_type="finance")
+
+        assert session.budget_limit_usd == Decimal("12.5")
+
+    def test_restore_session_rehydrates_snapshot_into_live_registry(self) -> None:
+        """restore_session must repopulate the enforcer registry from a snapshot."""
+        sid = uuid4()
+        enforcer = BudgetEnforcer()
+        snapshot: BudgetSessionSnapshot = {
+            "session_id": str(sid),
+            "agent_type": "finance",
+            "budget_limit_usd": "10.00",
+            "tokens_used": 150,
+            "cost_usd": "1.50",
+            "alerts": ["budget warning"],
+            "applied_operation_ids": ["activity-1"],
+        }
+
+        restored = enforcer.restore_session(snapshot)
+
+        assert restored.session_id == sid
+        assert restored.cost_usd == Decimal("1.50")
+        assert restored.tokens_used == 150
+        assert restored.applied_operation_ids == {"activity-1"}
+        assert enforcer.get_session(sid) is restored
+
+    def test_resolve_cost_per_token_zero_tokens_returns_zero(self) -> None:
+        """Zero-token ledger entries should resolve to a zero per-token cost."""
+        entry: BudgetHistoryEntry = {
+            "operation_id": "activity-0",
+            "amount_usd": "0.00",
+            "tokens_used": 0,
+        }
+
+        assert BudgetEnforcer._resolve_cost_per_token(entry) == Decimal("0")
 
 
 def test_budget_serialize_deserialize_round_trip(enforcer: BudgetEnforcer) -> None:

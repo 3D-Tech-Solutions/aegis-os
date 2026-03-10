@@ -112,33 +112,6 @@ class TestGuideStructure:
 class TestQuickstartExecution:
     """Each fenced Python block in the guide must execute with exit code 0."""
 
-    @pytest.mark.parametrize("block_idx", range(10))  # upper bound; filtered below
-    def test_block_exits_zero(
-        self, block_idx: int, python_blocks: list[str], tmp_path: Path
-    ) -> None:
-        """Block #{block_idx} must run without error (exit code 0)."""
-        if block_idx >= len(python_blocks):
-            pytest.skip(f"Block index {block_idx} does not exist in this guide.")
-
-        block = python_blocks[block_idx]
-        script = tmp_path / f"block_{block_idx}.py"
-        script.write_text(textwrap.dedent(block), encoding="utf-8")
-
-        result = subprocess.run(
-            [sys.executable, str(script)],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=str(REPO_ROOT),
-        )
-
-        assert result.returncode == 0, (
-            f"Python block #{block_idx} exited with code {result.returncode}.\n"
-            f"--- stdout ---\n{result.stdout}\n"
-            f"--- stderr ---\n{result.stderr}\n"
-            f"--- block source ---\n{block}"
-        )
-
     def test_all_blocks_exit_zero(self, python_blocks: list[str], tmp_path: Path) -> None:
         """Bulk assertion: every extracted Python block must exit 0."""
         failures: list[str] = []

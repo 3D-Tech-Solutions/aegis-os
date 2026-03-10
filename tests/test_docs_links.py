@@ -102,16 +102,6 @@ class TestInternalLinks:
             "The guide must link to docs/audit-event-schema.json."
         )
 
-    @pytest.mark.parametrize("label,url", [])  # populated dynamically below
-    def test_internal_link_resolves(self, label: str, url: str) -> None:
-        """Each internal file link must point to an existing file."""
-        # Resolve relative to the guide's parent directory (docs/).
-        target = (GUIDE_PATH.parent / url).resolve()
-        assert target.exists(), (
-            f"Internal link [{label}]({url}) in the guide does not resolve. "
-            f"Expected file: {target}"
-        )
-
     def test_all_internal_links_resolve(
         self, internal_file_links: list[tuple[str, str]]
     ) -> None:
@@ -164,25 +154,12 @@ def _check_url(url: str, timeout: float = 10.0, retries: int = 1) -> tuple[bool,
 class TestExternalLinks:
     """All external URLs in the guide must return HTTP 200."""
 
-    def test_external_links_present_or_skippable(
-        self, external_links: list[tuple[str, str]]
-    ) -> None:
-        """Either there are no external links, or they all return 200."""
-        if not external_links:
-            pytest.skip("No external URLs in guide — nothing to check.")
-
-    @pytest.mark.parametrize("label,url", [])  # populated dynamically below
-    def test_external_url_returns_200(self, label: str, url: str) -> None:
-        """External URL must return HTTP 200 within 10 s (with one retry)."""
-        ok, reason = _check_url(url)
-        assert ok, f"External link [{label}]({url}) returned: {reason}"
-
     def test_all_external_urls_return_200(
         self, external_links: list[tuple[str, str]]
     ) -> None:
         """Bulk: every external URL must return 200."""
         if not external_links:
-            pytest.skip("No external URLs in guide.")
+            return
         failures: list[str] = []
         for label, url in external_links:
             ok, reason = _check_url(url)

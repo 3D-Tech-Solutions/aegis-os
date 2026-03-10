@@ -191,6 +191,9 @@ For v0.1, use in-memory Python dicts (`self._sessions`, `self._contexts`) with n
 **Deciders**: Aegis-OS Core Team (Security & Governance, Platform)  
 **Phase**: Phase 2 preparation (S-prep-1)
 
+**Gate 2 review note**: Reviewed against the implemented Phase 2 workflow and
+signed off by the Platform team lead on 2026-03-09.
+
 ## Context
 
 When a `LoopDetector` raises `PendingApprovalError`, the orchestrator must pause workflow execution and wait for an authorised human operator to either approve or deny continued execution. This introduces a new workflow state (`PendingApproval`) that must be modelled explicitly, with defined transitions, timeouts, and RBAC gating.

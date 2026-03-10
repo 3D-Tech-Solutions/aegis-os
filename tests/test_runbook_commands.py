@@ -42,7 +42,8 @@ if [[ "$args" == *"/health"* ]]; then
   exit 0
 fi
 if [[ "$args" == *"/api/v1/rules"* ]]; then
-  printf '{"status":"success","data":{"groups":[{"name":"aegis_hitl","rules":[{"name":"aegis_hitl_stuck"}]}]}}\n'
+    printf '%s\n' \
+        '{"status":"success","data":{"groups":[{"name":"aegis_hitl","rules":[{"name":"aegis_hitl_stuck"}]}]}}'
   exit 0
 fi
 if [[ "$args" == *"aegis_budget_remaining_usd"* ]]; then
@@ -50,11 +51,13 @@ if [[ "$args" == *"aegis_budget_remaining_usd"* ]]; then
   exit 0
 fi
 if [[ "$args" == *"/api/v1/tasks/"*"/approve"* ]]; then
-  printf '{"task_id":"%s","status":"approved","actor_id":"admin-user"}\n' "11111111-2222-3333-4444-555555555555"
+    printf '%s\n' \
+        '{"task_id":"11111111-2222-3333-4444-555555555555","status":"approved","actor_id":"admin-user"}'
   exit 0
 fi
 if [[ "$args" == *"/api/v1/tasks/"*"/deny"* ]]; then
-  printf '{"task_id":"%s","status":"denied","actor_id":"admin-user"}\n' "11111111-2222-3333-4444-555555555555"
+    printf '%s\n' \
+        '{"task_id":"11111111-2222-3333-4444-555555555555","status":"denied","actor_id":"admin-user"}'
   exit 0
 fi
 printf '{}\n'
@@ -75,8 +78,11 @@ printf '{}\n'
 set -e
 args=\"$*\"
 if [[ \"$args\" == *\"logs aegis-api\"* ]]; then
-  printf '{{\"event\":\"budget.exceeded\",\"session_id\":\"{_SESSION_ID}\",\"message\":\"Session {_SESSION_ID} exceeded budget ($10.0042 > $10.0000)\",\"agent_type\":\"general\"}}\\n'
-  printf '{{\"session_id\":\"{_SESSION_ID}\",\"agent_type\":\"general\",\"event\":\"budget.review_required\"}}\\n'
+    printf '%s%s\\n' \
+        '{{\"event\":\"budget.exceeded\",\"session_id\":\"{_SESSION_ID}\",\"message\":\"' \
+        'Session {_SESSION_ID} exceeded budget ($10.0042 > $10.0000)\",\"agent_type\":\"general\"}}'
+    printf '%s\\n' \
+        '{{\"session_id\":\"{_SESSION_ID}\",\"agent_type\":\"general\",\"event\":\"budget.review_required\"}}'
   exit 0
 fi
 exit 0
@@ -118,7 +124,9 @@ def test_hitl_runbook_bash_blocks_execute() -> None:
         for block in blocks:
             result = _run_shell_block(block, toolchain_dir)
             assert result.returncode == 0, (
-                f"HITL runbook command block failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+                "HITL runbook command block failed:\n"
+                f"STDOUT:\n{result.stdout}\n"
+                f"STDERR:\n{result.stderr}"
             )
     finally:
         subprocess.run(["rm", "-rf", str(toolchain_dir)], check=False)
@@ -134,7 +142,9 @@ def test_budget_runbook_bash_blocks_execute() -> None:
         for block in blocks:
             result = _run_shell_block(block, toolchain_dir)
             assert result.returncode == 0, (
-                f"Budget runbook command block failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+                "Budget runbook command block failed:\n"
+                f"STDOUT:\n{result.stdout}\n"
+                f"STDERR:\n{result.stderr}"
             )
     finally:
         subprocess.run(["rm", "-rf", str(toolchain_dir)], check=False)

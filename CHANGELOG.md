@@ -11,6 +11,87 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.4.0] — 2026-03-09
+
+**Phase 2 — Durable Orchestration.** Temporal-backed execution now survives
+retries, worker restarts, approval pauses, and provider-failure recovery with
+validated audit continuity, replay-safe budget accounting, and release-grade
+documentation for HITL operations.
+
+### Added
+
+**Platform (P2-1, P2-2, P2-3, P2-4)**
+- `src/control_plane/scheduler.py` now provides a real `AgentTaskWorkflow`
+	mapped 1:1 to the five Governance Loop stages with durable Temporal activity
+	execution, workflow queries/signals, and restart-safe state propagation.
+- `src/control_plane/data_converter.py` adds encrypted Temporal payload
+	persistence backed by Fernet so prompts, intermediate context, and workflow
+	inputs are not stored in plaintext workflow history.
+- `tests/test_temporal_workflow.py`, `tests/test_p2_retry.py`,
+	`tests/test_p2_encryption.py`, `tests/test_p2_chaos.py`, and
+	`tests/test_no_workflow_stubs.py` now enforce activity mapping, retry
+	backoff, encrypted history, kill-and-resume continuity, and stub-free
+	workflow activities.
+
+**Security & Governance (S2-1, S2-2, S2-3, S2-4)**
+- Human-in-the-loop `PendingApproval` workflow state added with approve, deny,
+	and timeout handling wired through Temporal signals and task-scoped queries.
+- `POST /api/v1/tasks/{task_id}/approve` and
+	`POST /api/v1/tasks/{task_id}/deny` now enforce OPA-backed admin-only RBAC,
+	structured task lookup, and scoped JIT-token validation.
+- Sender-constrained JIT token rotation now re-issues JWTs and DPoP proofs on
+	retry while preserving `cnf.jkt` binding and rejecting replay of prior retry
+	credentials.
+- `tests/test_hitl_pending_approval.py`, `tests/test_hitl_endpoints.py`,
+	`tests/test_hitl_rbac_matrix.py`, and `tests/test_jit_retry_rotation.py`
+	provide the Gate 2 approval, RBAC, and adversarial token coverage.
+
+**Watchdog & Reliability (W2-1, W2-2, W2-3, W2-4)**
+- Budget and loop state now round-trip through durable workflow-owned
+	checkpoints, allowing exact restart recovery and replay-safe accounting.
+- Pending-approval Prometheus metrics and the `aegis_hitl_stuck` alert now
+	track live workflow approval state and resolve cleanly after review.
+- `tests/test_budget_recovery.py`, `tests/test_loop_recovery.py`,
+	`tests/test_pending_approval_metrics.py`, `tests/test_prometheus_rules.py`,
+	and `tests/test_budget_replay.py` now enforce restart recovery, alerting,
+	and seeded 1,000-task replay correctness.
+
+**Audit & Compliance (A2-1, A2-2, A2-3, A2-4)**
+- Temporal workflow and activity inputs now preserve caller-supplied `task_id`
+	and W3C `traceparent`, with propagation failures raising a dedicated audit
+	error before downstream work continues.
+- Lifecycle audit events now cover `started`, `retried`,
+	`pending-approval`, `approved`, `denied`, `completed`, and `failed`, with
+	deterministic `sequence_number` ordering and clock-skew protection.
+- `tests/test_temporal_trace_propagation.py`,
+	`tests/test_audit_lifecycle_count.py`, `tests/test_audit_lifecycle_events.py`,
+	`tests/test_audit_provider_outage.py`, and `tests/test_audit_ordering.py`
+	provide the Phase 2 propagation, lifecycle, outage, and ordering contracts.
+
+**Frontend & DevEx (F2-1, F2-2, F2-3, F2-4)**
+- `docs/deployment-guide.md`, `docs/api-reference.md`,
+	`docs/runbooks/hitl-stuck-approval.md`, and
+	`docs/runbooks/budget-exceeded.md` now reflect the live task-based HITL
+	model, Temporal operations flow, and recovery/runbook procedures.
+- `tests/test_deployment_guide_completeness.py`,
+	`tests/test_api_reference_schemas.py`, `tests/test_api_reference_completeness.py`,
+	`tests/test_hitl_timeout_contract.py`, `tests/test_runbook_completeness.py`,
+	`tests/test_runbook_cross_references.py`, `tests/test_runbook_commands.py`,
+	and `tests/test_runbook_budget_version.py` now enforce the Phase 2 docs and
+	runbook contracts in CI.
+
+### Changed
+- `Dockerfile` now copies `LICENSE`, allowing `docker compose build aegis-api
+	aegis-worker` to succeed when Hatchling resolves the project license file.
+- `docker-compose.yml` no longer declares the obsolete Compose `version`
+	field.
+- `.pre-commit-config.yaml` now includes Phase 2 release guards for workflow
+	stub detection and the encrypted Temporal data-converter plaintext guard.
+- `docs/architecture_decisions.md` records the Platform-team-lead Gate 2
+	sign-off for the `PendingApproval` state machine.
+
+---
+
 ## [0.2.0] — 2026-03-05
 
 **Phase 1 — Aegis Governance Loop Integration.** All five governance stages
@@ -139,6 +220,7 @@ Initial prototype release establishing the core governance modules and control p
 
 ---
 
-[Unreleased]: https://github.com/3D-Tech-Solutions/aegis-os/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/3D-Tech-Solutions/aegis-os/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/3D-Tech-Solutions/aegis-os/compare/v0.2.0...v0.4.0
 [0.2.0]: https://github.com/3D-Tech-Solutions/aegis-os/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/3D-Tech-Solutions/aegis-os/releases/tag/v0.1.0

@@ -22,6 +22,29 @@ repos:
         types: [python]
 
   # ---------------------------------------------------------------------------
+  # Temporal workflow release guards for Gate 2.
+  # ---------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: temporal-workflow-no-stubs
+        name: Temporal workflow no-stubs guard
+        language: system
+        entry: pytest tests/test_no_workflow_stubs.py -x -q --no-header --no-cov
+        pass_filenames: false
+        files: ^(src/control_plane/scheduler\.py|tests/test_no_workflow_stubs\.py)$
+        types: [python]
+
+      - id: temporal-data-converter-plaintext-guard
+        name: Temporal data converter plaintext guard
+        language: system
+        entry: >-
+          pytest tests/test_p2_encryption.py::TestPlaintextHardFailureGuard::test_create_aegis_data_converter_has_encrypted_payload_codec
+          -q --no-header --no-cov
+        pass_filenames: false
+        files: ^(src/control_plane/data_converter\.py|src/config\.py|tests/test_p2_encryption\.py)$
+        types: [python]
+
+  # ---------------------------------------------------------------------------
   # Audit schema conformance — runs whenever logger.py or the schema changes.
   # Fires tests/test_schema_validity.py which covers:
   #   • schema self-validation (Draft7Validator.check_schema)

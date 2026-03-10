@@ -21,11 +21,11 @@ from pydantic import BaseModel, Field
 
 from src.config import settings
 from src.governance.session_mgr import (
-    DPoPReplayError,
     DPoPProofError,
+    DPoPReplayError,
     SessionManager,
-    TokenClaims,
     TokenBindingError,
+    TokenClaims,
 )
 
 AegisMetadata = Mapping[str, str]

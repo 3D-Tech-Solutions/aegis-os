@@ -23,6 +23,7 @@ Test matrix (roadmap item S1-1):
 
 from __future__ import annotations
 
+import time
 import unittest.mock as mock
 from pathlib import Path
 from typing import Any
@@ -503,7 +504,6 @@ class TestLiveOpa:
         """Spin up an OPA container and yield its base URL."""
         try:
             from testcontainers.core.container import DockerContainer
-            from testcontainers.core.waiting_utils import wait_for_logs
         except ImportError:
             pytest.skip("testcontainers not installed; skipping live OPA tests")
 
@@ -520,12 +520,12 @@ class TestLiveOpa:
             pytest.skip(f"Docker unavailable – skipping live OPA tests: {exc}")
 
         try:
-            wait_for_logs(container, "Listening", timeout=30)
-        except Exception:  # noqa: BLE001
+            port = container.get_exposed_port(8181)
+            _wait_for_opa_http_ready(f"http://localhost:{port}", timeout=30.0)
+        except TimeoutError:
             container.stop()
             pytest.skip("OPA container did not become ready in time; skipping")
 
-        port = container.get_exposed_port(8181)
         url = f"http://localhost:{port}"
 
         # Upload the agent_access policy via OPA's management API
@@ -540,6 +540,22 @@ class TestLiveOpa:
         yield url
 
         container.stop()
+
+
+def _wait_for_opa_http_ready(url: str, *, timeout: float) -> None:
+    """Wait until the OPA HTTP endpoint responds successfully."""
+    deadline = time.monotonic() + timeout
+    last_error: str | None = None
+    while time.monotonic() < deadline:
+        try:
+            response = httpx.get(f"{url}/", timeout=1.0)
+            if response.status_code == 200:
+                return
+            last_error = f"HTTP {response.status_code}"
+        except Exception as exc:  # noqa: BLE001
+            last_error = str(exc)
+        time.sleep(0.5)
+    raise TimeoutError(last_error or "OPA HTTP endpoint did not become ready")
 
     # --- Allow cases (all five registered agent types) ---
 
